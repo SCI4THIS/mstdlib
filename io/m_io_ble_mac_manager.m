@@ -24,7 +24,7 @@
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
  * When a peripheral first connects we know very little about it. Before any reads
  * or write can happen we need to get a list of services and each service's
- * characteristics. This is an asyc process which follows this pattern.
+ * characteristics. This is an async process which follows this pattern.
  *
  * 1. Start a scan
  * 2. didDiscoverPeripheral is triggered with a peripheral object.
@@ -34,25 +34,7 @@
  * 6. didDiscoverServices is triggered and provides a list of services.
  * 7. For each service reported request its characteristics.
  * 8. didDiscoverCharacteristicsForService is triggered.
- *
- * The peripheral, and characteristic objects are all cached externally.
- * Characteristics are lazy loaded and only pulled on a connect. A scan
- * running as part of a basic enumeration will not request characteristics.
- * As such, we can end up in a few different situations when opening a device
- * for use.
- *
- * 1. We've scanned and have a peripheral and list of services cached.
- *    a. Request characteristics.
- *    b. Issue connected event.
- * 2. We haven't scanned and need to find a given device.
- *    a. Start scan
- *    b. Request services
- *    c. Request characteristics for each service.
- *    d. Issue connected event.
- *
- * In both situations the connected event is triggered after characteristics
- * for all services have been read.
- *
+ * 9. Associate peripheral with M_io_ble_device_t.
  */
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -65,24 +47,6 @@
 #import "m_io_ble_mac_manager.h"
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-static int compar_scan_trigger(const void *a, const void *b, void *thunk)
-{
-	const ScanTrigger *sta = (__bridge ScanTrigger *)(*(void * const *)a);
-	const ScanTrigger *stb = (__bridge ScanTrigger *)(*(void * const *)b);
-
-	(void)thunk;
-
-	if (sta == NULL || stb == NULL)
-		return 0;
-
-	/* Compare based on trigger pointer */
-	if (sta.trigger == stb.trigger)
-		return 0;
-	if (sta.trigger < stb.trigger)
-		return -1;
-	return 1;
-}
 
 static void del_scan_trigger(void *p)
 {
@@ -141,7 +105,7 @@ NSUInteger        blind_cnt  = 0;
 - (id)init
 {
 	struct M_list_callbacks lcbs = {
-		compar_scan_trigger,
+		NULL,
 		NULL,
 		NULL,
 		(M_list_free_func)del_scan_trigger
@@ -151,10 +115,7 @@ NSUInteger        blind_cnt  = 0;
 	if (!self)
 		return nil;
 
-	/* All matching is based on value because the ScanTrigger object
-	 * created in startScan has a different pointer than the one
-	 * sent to scanTimeout. Even though they're the same object. */
-	triggers = M_list_create(&lcbs, M_LIST_SET_VAL);
+	triggers = M_list_create(&lcbs, M_LIST_NONE);
 
 	return self;
 }
@@ -162,8 +123,10 @@ NSUInteger        blind_cnt  = 0;
 - (void)dealloc
 {
 	_manager = nil;
-	M_list_destroy(triggers, M_TRUE);
-	M_io_ble_cbc_event_reset();
+	/* This should only be called on MSTDLIB library deinit.
+	 * We don't want to try to trigger anything because the
+	 * event loop should have already been destoroyed. */
+	M_list_destroy(triggers, M_FALSE);
 }
 
 - (void)setManager:(CBCentralManager *)manager
@@ -192,10 +155,9 @@ NSUInteger        blind_cnt  = 0;
 
 - (void)startScanBlind
 {
-	blind_cnt++;
-
 	if (_manager.isScanning || !powered_on)
 		return;
+	blind_cnt++;
 
 	[_manager scanForPeripheralsWithServices:nil options:nil];
 }
@@ -204,7 +166,6 @@ NSUInteger        blind_cnt  = 0;
 {
 	if (blind_cnt == 0)
 		return;
-
 	blind_cnt--;
 
 	/* Scan requests might still be outstanding. Don't
@@ -212,11 +173,12 @@ NSUInteger        blind_cnt  = 0;
 	 * stop blind scans in case they were started without
 	 * using a trigger. Trying to connect to a specific
 	 * device uses blind scans. */
-	if (!_manager.isScanning || M_list_len(triggers) != 0 || blind_cnt != 0)
+	if (M_list_len(triggers) != 0 || blind_cnt != 0)
 		return;
 
-	[_manager stopScan];
-	M_io_ble_device_scan_finished();
+	if (_manager.isScanning)
+		[_manager stopScan];
+	M_io_ble_device_reap_seen();
 }
 
 - (void)scanTimeout:(NSTimer *)timer
@@ -224,33 +186,14 @@ NSUInteger        blind_cnt  = 0;
 	ScanTrigger *st = timer.userInfo;
 	size_t       idx;
 
-	if (st == nil || !M_list_index_of(triggers, (__bridge void *)st, M_LIST_MATCH_VAL, &idx))
+	if (st == nil || !M_list_index_of(triggers, (__bridge CFTypeRef)st, M_LIST_MATCH_PTR, &idx))
 		return;
 
 	M_list_remove_at(triggers, idx);
 	if (M_list_len(triggers) == 0 && blind_cnt == 0) {
 		[_manager stopScan];
-		M_io_ble_device_scan_finished();
+		M_io_ble_device_reap_seen();
 	}
-}
-
-- (BOOL)connectToDevice:(CBPeripheral *)peripheral
-{
-	CBPeripheralState state;
-
-	if (!powered_on || _manager == nil || peripheral == nil)	
-		return NO;
-
-	state = peripheral.state;
-	if (state == CBPeripheralStateDisconnected) {
-		[_manager connectPeripheral:peripheral options:nil];
-		return YES;
-	}
-
-	/* Most likely the device is already connected. We can't connect
-	 * to a connected device. Also, we want to protect a second request
-	 * from another io object thinking it's connected when it isn't. */
-	return NO;
 }
 
 - (void)disconnectFromDevice:(CBPeripheral *)peripheral
@@ -303,10 +246,23 @@ NSUInteger        blind_cnt  = 0;
 	return YES;
 }
 
-- (BOOL)requestNotifyFromPeripheral:peripheral forCharacteristic:(CBCharacteristic *)characteristic enabled:(BOOL)enabled
+- (BOOL)requestNotifyFromPeripheral:(CBPeripheral *)peripheral forCharacteristic:(CBCharacteristic *)characteristic fromServiceUUID:(NSString *)service_uuid enabled:(BOOL)enabled
 {
+	/* We're passing in the service UUID instead of getting it from the characteristic
+	 * because for some unknown reason the characteristic.service.UUID causes a bad
+	 * memory read and crash. */
+	const char *uuid;
+	const char *characteristic_uuid;
+
 	if (characteristic == nil)
 		return NO;
+
+	if ((enabled && characteristic.isNotifying) || (!enabled && !characteristic.isNotifying)) {
+		uuid                = [[[peripheral identifier] UUIDString] UTF8String];
+		characteristic_uuid = [[characteristic.UUID UUIDString] UTF8String];
+		M_io_ble_device_notify_done(uuid, [service_uuid UTF8String], characteristic_uuid);
+		return YES;
+	}
 
 	[peripheral setNotifyValue:enabled forCharacteristic:characteristic];
 	return YES;
@@ -340,59 +296,43 @@ NSUInteger        blind_cnt  = 0;
 
 - (void)centralManager:(CBCentralManager *)central didDiscoverPeripheral:(CBPeripheral *)peripheral advertisementData:(NSDictionary<NSString *,id> *)advertisementData RSSI:(NSNumber *)RSSI
 {
+	const char   *uuid;
+	const char   *name;
+	M_list_str_t *service_uuids;
+
 	(void)central;
-	(void)advertisementData;
 	(void)RSSI;
 
-	/* We need to cache before passing into a C function for some reason.
-	 * If we pass in the CBPeripheral * then do the bridging later
-	 * it doens't work. */
-	M_io_ble_cache_device((__bridge_retained CFTypeRef)peripheral);
+	uuid = [[[peripheral identifier] UUIDString] UTF8String];
+	name = [[advertisementData objectForKey:CBAdvertisementDataLocalNameKey] UTF8String];
 
-	/* Ensure the peripheral has the proper delegate set. */
-	if (peripheral.delegate != self)
-		peripheral.delegate = self;
+	/* If no services are advertised we don't want to try to use this device. */
+	if ([[advertisementData objectForKey:CBAdvertisementDataServiceUUIDsKey] count] == 0)
+		return;
 
-	if (M_io_ble_device_need_read_services([[[peripheral identifier] UUIDString] UTF8String])) {
+	service_uuids = M_list_str_create(M_LIST_STR_SORTASC);
+	for (CBUUID *nuuid in [advertisementData objectForKey:CBAdvertisementDataServiceUUIDsKey]) {
+		M_list_str_insert(service_uuids, [[nuuid UUIDString] UTF8String]);
+	}
+
+	M_io_ble_saw_device(uuid, name, service_uuids);
+
+	if (M_io_ble_device_waiting_connect(uuid, service_uuids) && peripheral.state == CBPeripheralStateDisconnected) {
+		if (peripheral.delegate != self) {
+			peripheral.delegate = self;
+		}
+
+		M_io_ble_device_cache_peripherial(peripheral);
 		[_manager connectPeripheral:peripheral options:nil];
 	}
+
+	M_list_str_destroy(service_uuids);
 }
 
 - (void)centralManager:(CBCentralManager *)central didConnectPeripheral:(CBPeripheral *)peripheral
 {
-	const char *uuid;
-	const char *service_uuid;
-	M_bool      read_characteristics = M_FALSE;
-
 	(void)central;
-
-	uuid = [[[peripheral identifier] UUIDString] UTF8String];
-
-	if (M_io_ble_device_need_read_services(uuid)) {
-		/* If we need services we need to request them regardless if there
-		 * is a device associated. */
-		[peripheral discoverServices:nil];
-	} else { /* We have services */
-		if (M_io_ble_device_is_associated(uuid)) {
-			/* Check if we already have characteristics for all of the services.
-			 * If we're missing any we need to request it. */
-			for (CBService *service in peripheral.services) {
-				service_uuid = [[service.UUID UUIDString] UTF8String];
-				if (M_io_ble_device_need_read_characteristics(uuid, service_uuid)) {
-					[peripheral discoverCharacteristics:nil forService:service];
-					read_characteristics = M_TRUE;
-				}
-			}
-			if (!read_characteristics) {
-				/* We have all the characteristics so we're good to use the device. */
-				M_io_ble_device_set_state(uuid, M_IO_STATE_CONNECTED, NULL);
-			}
-		} else {
-			/* Not associated and we have services so we don't need to do anything. */
-			[_manager cancelPeripheralConnection:peripheral];
-			M_io_ble_device_set_state(uuid, M_IO_STATE_DISCONNECTING, NULL);
-		}
-	}
+	[peripheral discoverServices:nil];
 }
 
 - (void)centralManager:(CBCentralManager *)central didFailToConnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error
@@ -426,53 +366,35 @@ NSUInteger        blind_cnt  = 0;
 - (void)peripheral:(CBPeripheral *)peripheral didDiscoverServices:(NSError *)error
 {
 	const char *uuid;
-	M_bool      associated;
 	char        msg[256];
 
 	if (peripheral == nil)
 		return;
 
-	uuid       = [[[peripheral identifier] UUIDString] UTF8String];
-	associated = M_io_ble_device_is_associated(uuid);
+	uuid = [[[peripheral identifier] UUIDString] UTF8String];
 
 	if (error != nil) {
-		if (!associated) {
-			[_manager cancelPeripheralConnection:peripheral];
-		}
 		M_snprintf(msg, sizeof(msg), "Service discovery failed: %s", [[error localizedDescription] UTF8String]);
 		M_io_ble_device_set_state(uuid, M_IO_STATE_ERROR, msg);
 		return;
 	}
 
-	for (CBService *service in peripheral.services) {
-		M_io_ble_device_add_serivce(uuid, [[service.UUID UUIDString] UTF8String]);
-		if (associated) {
-			/* Something is waiting to use this peripheral so we need
-			 * to request the characteristics for all services. */
-			[peripheral discoverCharacteristics:nil forService:service];
-		}
+	if ([peripheral.services count] == 0) {
+		M_io_ble_device_set_state(uuid, M_IO_STATE_DISCONNECTING, NULL);
+		[_manager cancelPeripheralConnection:peripheral];
+		return;
 	}
 
-	if (!associated) {
-		/* Nothing is waiting to use the peripheral so we must have been opened
-		 * by a enumerating scan. We don't need the device anymore because we
-		 * have everything we need. */
-		[_manager cancelPeripheralConnection:peripheral];
-		M_io_ble_device_set_state(uuid, M_IO_STATE_DISCONNECTING, NULL);
-	}
+	for (CBService *service in peripheral.services)
+		[peripheral discoverCharacteristics:nil forService:service];
 }
 
 - (void)peripheral:(CBPeripheral *)peripheral didModifyServices:(NSArray<CBService *> *)invalidatedServices
 {
-	const char *uuid;
-
 	/* Ignore the list of invalidted. This list is only services that have
 	* been "removed" by the device and doens't include new ones. We'll clear
 	* all and pull again so we can have a full listing of services. */
 	(void)invalidatedServices;
-
-	uuid = [[[peripheral identifier] UUIDString] UTF8String];
-	M_io_ble_device_clear_services(uuid);
 
 	/* We issue a disconnect event because there could have been subscriptions which
 	 * have now been cleared. It's better to pretend we got a disconnect and have
@@ -485,6 +407,7 @@ NSUInteger        blind_cnt  = 0;
 	const char *uuid;
 	const char *service_uuid;
 	char        msg[256];
+	BOOL        have_all = YES;
 
 	if (peripheral == nil || service == nil)
 		return;
@@ -498,16 +421,19 @@ NSUInteger        blind_cnt  = 0;
 		return;
 	}
 
-	for (CBCharacteristic *c in service.characteristics) {
-		M_io_ble_device_add_characteristic(uuid, service_uuid, [[c.UUID UUIDString] UTF8String], (__bridge_retained CFTypeRef)c);
-	}
-
 	/* The manager is running on a single thread (the main one) so
 	 * this event will never be processed in parallel and cause two
 	 * connected states to be set. Discovering characteristics only
 	 * happens once so we also don't need to worry about that either. */
-	if (M_io_ble_device_have_all_characteristics(uuid))
-		M_io_ble_device_set_state(uuid, M_IO_STATE_CONNECTED, NULL);
+	for (CBService *s in peripheral.services) {
+		if ([s.characteristics count] == 0) {
+			have_all = NO;
+			break;
+		}
+	}
+
+	if (have_all)
+		M_io_ble_device_set_connected(peripheral);
 }
 
 - (void)peripheral:(CBPeripheral *)peripheral didWriteValueForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error
@@ -566,6 +492,29 @@ NSUInteger        blind_cnt  = 0;
    	rdata               = data.bytes;
 
 	M_io_ble_device_read_data(uuid, service_uuid, characteristic_uuid, rdata, data.length);
+}
+
+- (void)peripheral:(CBPeripheral *)peripheral didUpdateNotificationStateForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error
+{
+	const char *uuid;
+	const char *service_uuid;
+	const char *characteristic_uuid;
+	char        msg[256];
+
+	if (peripheral == nil)
+		return;
+
+	uuid                = [[[peripheral identifier] UUIDString] UTF8String];
+	service_uuid        = [[characteristic.service.UUID UUIDString] UTF8String];
+	characteristic_uuid = [[characteristic.UUID UUIDString] UTF8String];
+
+	if (error != nil) {
+		M_snprintf(msg, sizeof(msg), "Set notify failed for characteristic (%s): %s", characteristic_uuid, [[error localizedDescription] UTF8String]);
+		M_io_ble_device_set_state(uuid, M_IO_STATE_ERROR, msg);
+		return;
+	}
+
+	M_io_ble_device_notify_done(uuid, service_uuid, characteristic_uuid);
 }
 
 - (void)peripheral:(CBPeripheral *)peripheral didReadRSSI:(NSNumber *)RSSI error:(NSError *)error

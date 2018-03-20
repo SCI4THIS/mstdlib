@@ -43,6 +43,7 @@ static M_io_ble_rdata_t *M_io_ble_rdata_create(M_io_ble_rtype_t prop)
 			rdata->d.read.data = M_buf_create();
 			break;
 		case M_IO_BLE_RTYPE_RSSI:
+		case M_IO_BLE_RTYPE_NOTIFY:
 			break;
 	}
 
@@ -59,6 +60,7 @@ void M_io_ble_rdata_destroy(M_io_ble_rdata_t *rdata)
 			M_buf_cancel(rdata->d.read.data);
 			break;
 		case M_IO_BLE_RTYPE_RSSI:
+		case M_IO_BLE_RTYPE_NOTIFY:
 			break;
 	}
 	M_free(rdata);
@@ -91,7 +93,11 @@ M_bool M_io_ble_rdata_queue_add_read(M_llist_t *queue, const char *service_uuid,
 		rdata = M_io_ble_rdata_create(M_IO_BLE_RTYPE_READ);
 		M_str_cpy(rdata->d.read.service_uuid, sizeof(rdata->d.read.service_uuid), service_uuid);
 		M_str_cpy(rdata->d.read.characteristic_uuid, sizeof(rdata->d.read.characteristic_uuid), characteristic_uuid);
-		n = M_llist_insert(queue, rdata);
+		if (M_llist_insert(queue, rdata) == NULL) {
+			/* Shouldn't ever happen, but just in case: */
+			M_io_ble_rdata_destroy(rdata);
+			return M_FALSE;
+		}
 	}
 
 	M_buf_add_bytes(rdata->d.read.data, data, data_len);
@@ -107,6 +113,21 @@ M_bool M_io_ble_rdata_queue_add_rssi(M_llist_t *queue, M_int64 rssi)
 
 	rdata = M_io_ble_rdata_create(M_IO_BLE_RTYPE_RSSI);
 	rdata->d.rssi.val = rssi;
+	M_llist_insert(queue, rdata);
+
+	return M_TRUE;
+}
+
+M_bool M_io_ble_rdata_queue_add_notify(M_llist_t *queue, const char *service_uuid, const char *characteristic_uuid)
+{
+	M_io_ble_rdata_t *rdata;
+
+	if (queue == NULL)
+		return M_FALSE;
+
+	rdata = M_io_ble_rdata_create(M_IO_BLE_RTYPE_NOTIFY);
+	M_str_cpy(rdata->d.notify.service_uuid, sizeof(rdata->d.notify.service_uuid), service_uuid);
+	M_str_cpy(rdata->d.notify.characteristic_uuid, sizeof(rdata->d.notify.characteristic_uuid), characteristic_uuid);
 	M_llist_insert(queue, rdata);
 
 	return M_TRUE;

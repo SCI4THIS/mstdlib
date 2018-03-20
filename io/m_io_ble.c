@@ -30,19 +30,10 @@
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static void M_io_ble_enum_free_device(void *arg)
-{
-	M_io_ble_enum_device_t *device = arg;
-	M_free(device->name);
-	M_free(device->uuid);
-	M_free(device->service_uuid);
-	M_free(device);
-}
-
 static M_hash_multi_t *M_io_ble_get_meta_data(M_io_t *io, M_io_meta_t *meta)
 {
 	M_hash_multi_t *d;
-	M_io_layer_t   *layer;
+	M_io_layer_t   *layer  = NULL;
 	M_io_handle_t  *handle = NULL;
 	size_t          len;
 	size_t          i;
@@ -60,7 +51,6 @@ static M_hash_multi_t *M_io_ble_get_meta_data(M_io_t *io, M_io_meta_t *meta)
 	if (handle == NULL)
 		return NULL;
 
-	io = handle->io;
 	d  = M_io_meta_get_layer_data(meta, layer);
 	if (d == NULL) {
 		d = M_hash_multi_create(M_HASH_MULTI_NONE);
@@ -104,6 +94,14 @@ M_uint64 M_io_ble_validate_timeout(M_uint64 timeout_ms)
 	return timeout_ms;
 }
 
+void M_io_ble_enum_free_device(M_io_ble_enum_device_t *dev)
+{
+	if (dev == NULL)
+		return;
+	M_list_str_destroy(dev->service_uuids);
+	M_free(dev);
+}
+
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 void M_io_ble_enum_destroy(M_io_ble_enum_t *btenum)
@@ -121,7 +119,7 @@ M_io_ble_enum_t *M_io_ble_enum_init(void)
 		NULL,
 		NULL,
 		NULL,
-		M_io_ble_enum_free_device
+		(M_list_free_func)M_io_ble_enum_free_device
 	};
 	btenum->devices = M_list_create(&listcbs, M_LIST_NONE);
 	return btenum;
@@ -134,21 +132,31 @@ size_t M_io_ble_enum_count(const M_io_ble_enum_t *btenum)
 	return M_list_len(btenum->devices);
 }
 
-void M_io_ble_enum_add(M_io_ble_enum_t *btenum, const char *name, const char *uuid, const char *service_uuid, M_time_t last_seen, M_bool connected)
+void M_io_ble_enum_add(M_io_ble_enum_t *btenum, const M_io_ble_enum_device_t *edev)
 {
 	M_io_ble_enum_device_t *device;
 
-	if (btenum == NULL || M_str_isempty(uuid) || M_str_isempty(service_uuid))
+	if (btenum == NULL || edev == NULL)
 		return;
 
-	device               = M_malloc_zero(sizeof(*device));
-	device->name         = M_strdup(name);
-	device->uuid         = M_strdup(uuid);
-	device->service_uuid = M_strdup(service_uuid);
-	device->last_seen    = last_seen;
-	device->connected    = connected;
+	device                = M_malloc_zero(sizeof(*device));
+	device->service_uuids = M_list_str_duplicate(edev->service_uuids);
+	device->last_seen     = edev->last_seen;
+	M_str_cpy(device->name, sizeof(device->name), edev->name);
+	M_str_cpy(device->identifier, sizeof(device->identifier), edev->identifier);
 
 	M_list_insert(btenum->devices, device);
+}
+
+const char *M_io_ble_enum_identifier(const M_io_ble_enum_t *btenum, size_t idx)
+{
+	const M_io_ble_enum_device_t *device;
+	if (btenum == NULL)
+		return NULL;
+	device = M_list_at(btenum->devices, idx);
+	if (device == NULL)
+		return NULL;
+	return device->identifier;
 }
 
 const char *M_io_ble_enum_name(const M_io_ble_enum_t *btenum, size_t idx)
@@ -162,7 +170,7 @@ const char *M_io_ble_enum_name(const M_io_ble_enum_t *btenum, size_t idx)
 	return device->name;
 }
 
-const char *M_io_ble_enum_uuid(const M_io_ble_enum_t *btenum, size_t idx)
+M_list_str_t *M_io_ble_enum_service_uuids(const M_io_ble_enum_t *btenum, size_t idx)
 {
 	const M_io_ble_enum_device_t *device;
 	if (btenum == NULL)
@@ -170,29 +178,7 @@ const char *M_io_ble_enum_uuid(const M_io_ble_enum_t *btenum, size_t idx)
 	device = M_list_at(btenum->devices, idx);
 	if (device == NULL)
 		return NULL;
-	return device->uuid;
-}
-
-M_bool M_io_ble_enum_connected(const M_io_ble_enum_t *btenum, size_t idx)
-{
-	const M_io_ble_enum_device_t *device;
-	if (btenum == NULL)
-		return M_FALSE;
-	device = M_list_at(btenum->devices, idx);
-	if (device == NULL)
-		return M_FALSE;
-	return device->connected;
-}
-
-const char *M_io_ble_enum_service_uuid(const M_io_ble_enum_t *btenum, size_t idx)
-{
-	const M_io_ble_enum_device_t *device;
-	if (btenum == NULL)
-		return NULL;
-	device = M_list_at(btenum->devices, idx);
-	if (device == NULL)
-		return NULL;
-	return device->service_uuid;
+	return M_list_str_duplicate(device->service_uuids);
 }
 
 M_time_t M_io_ble_enum_last_seen(const M_io_ble_enum_t *btenum, size_t idx)
@@ -207,17 +193,6 @@ M_time_t M_io_ble_enum_last_seen(const M_io_ble_enum_t *btenum, size_t idx)
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-M_io_error_t M_io_ble_set_notify(M_io_t *io, const char *service_uuid, const char *characteristic_uuid, M_bool enable)
-{
-	M_io_handle_t *handle;
-
-	handle = M_io_ble_get_io_handle(io);
-	if (handle == NULL)
-		return M_IO_ERROR_INVALID;
-	return M_io_ble_set_device_notify(handle->uuid, service_uuid, characteristic_uuid, enable);
-}
-
 
 M_list_str_t *M_io_ble_get_services(M_io_t *io)
 {
@@ -270,16 +245,46 @@ void M_io_ble_get_max_write_sizes(M_io_t *io, size_t *with_response, size_t *wit
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-M_io_error_t M_io_ble_create(M_io_t **io_out, const char *uuid, M_uint64 timeout_ms)
+M_io_error_t M_io_ble_create(M_io_t **io_out, const char *identifier, M_uint64 timeout_ms)
 {
 	M_io_handle_t    *handle;
 	M_io_callbacks_t *callbacks;
 	M_io_error_t      err;
 
-	if (io_out == NULL || M_str_isempty(uuid))
+	if (io_out == NULL || M_str_isempty(identifier))
 		return M_IO_ERROR_INVALID;
 
-	handle = M_io_ble_open(uuid, &err, timeout_ms);
+	handle = M_io_ble_open(identifier, &err, timeout_ms);
+	if (handle == NULL)
+		return M_IO_ERROR_INVALID;
+
+	*io_out   = M_io_init(M_IO_TYPE_STREAM);
+	callbacks = M_io_callbacks_create();
+	M_io_callbacks_reg_init(callbacks, M_io_ble_init_cb);
+	M_io_callbacks_reg_read(callbacks, M_io_ble_read_cb);
+	M_io_callbacks_reg_write(callbacks, M_io_ble_write_cb);
+	M_io_callbacks_reg_processevent(callbacks, M_io_ble_process_cb);
+	M_io_callbacks_reg_unregister(callbacks, M_io_ble_unregister_cb);
+	M_io_callbacks_reg_destroy(callbacks, M_io_ble_destroy_cb);
+	M_io_callbacks_reg_disconnect(callbacks, M_io_ble_disconnect_cb);
+	M_io_callbacks_reg_state(callbacks, M_io_ble_state_cb);
+	M_io_callbacks_reg_errormsg(callbacks, M_io_ble_errormsg_cb);
+	M_io_layer_add(*io_out, M_IO_BLE_NAME, handle, callbacks);
+	M_io_callbacks_destroy(callbacks);
+
+	return M_IO_ERROR_SUCCESS;
+}
+
+M_io_error_t M_io_ble_create_with_service(M_io_t **io_out, const char *service_uuid, M_uint64 timeout_ms)
+{
+	M_io_handle_t    *handle;
+	M_io_callbacks_t *callbacks;
+	M_io_error_t      err;
+
+	if (io_out == NULL || M_str_isempty(service_uuid))
+		return M_IO_ERROR_INVALID;
+
+	handle = M_io_ble_open_with_service(service_uuid, &err, timeout_ms);
 	if (handle == NULL)
 		return M_IO_ERROR_INVALID;
 
@@ -316,7 +321,7 @@ const char *M_io_ble_meta_get_service(M_io_t *io, M_io_meta_t *meta)
 	return const_temp;
 }
 
-const char *M_io_ble_meta_get_charateristic(M_io_t *io, M_io_meta_t *meta)
+const char *M_io_ble_meta_get_characteristic(M_io_t *io, M_io_meta_t *meta)
 {
 	M_hash_multi_t *d;
 	const char     *const_temp = NULL;
@@ -393,7 +398,7 @@ void M_io_ble_meta_set_service(M_io_t *io, M_io_meta_t *meta, const char *servic
 	M_hash_multi_u64_insert_str(d, M_IO_BLE_META_KEY_SERVICE_UUID, service_uuid);
 }
 
-void M_io_ble_meta_set_charateristic(M_io_t *io, M_io_meta_t *meta, const char *characteristic_uuid)
+void M_io_ble_meta_set_characteristic(M_io_t *io, M_io_meta_t *meta, const char *characteristic_uuid)
 {
 	M_hash_multi_t *d;
 
@@ -402,6 +407,17 @@ void M_io_ble_meta_set_charateristic(M_io_t *io, M_io_meta_t *meta, const char *
 
 	d = M_io_ble_get_meta_data(io, meta);
 	M_hash_multi_u64_insert_str(d, M_IO_BLE_META_KEY_CHARACTERISTIC_UUID, characteristic_uuid);
+}
+
+void M_io_ble_meta_set_notify(M_io_t *io, M_io_meta_t *meta, M_bool enable)
+{
+	M_hash_multi_t *d;
+
+	if (io == NULL || meta == NULL)
+		return;
+
+	d = M_io_ble_get_meta_data(io, meta);
+	M_hash_multi_u64_insert_bool(d, M_IO_BLE_META_KEY_NOTIFY, enable);
 }
 
 void M_io_ble_meta_set_write_type(M_io_t *io, M_io_meta_t *meta, M_io_ble_wtype_t type)

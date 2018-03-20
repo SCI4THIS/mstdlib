@@ -26,6 +26,8 @@
 
 #include <mstdlib/base/m_defs.h>
 #include <mstdlib/base/m_types.h>
+#include <mstdlib/base/m_list_str.h>
+#include <mstdlib/base/m_time.h>
 #include <mstdlib/io/m_io.h>
 #include <mstdlib/io/m_event.h>
 
@@ -53,25 +55,26 @@ __BEGIN_DECLS
  * provides services the application wants to use. A good example is a heart rate monitor.
  *
  * A health app doesn't care which heart rate monitor is being used it only cares about
- * getting hear rate data. Typically, the user will be presented with a list of suitable
+ * getting heart rate data. Typically, the user will be presented with a list of suitable
  * devices in case multiple devices are detected (for example, multiple people going on
  * a bike ride together).
  *
- * Since there is no pairing the device much be found by scanning for available devices.
- * This happen in two ways. First M_io_ble_scan will look for and cache devices that can
- * be seen by the OS. During a scan, stale devices (over 15 minutes old) will be removed.
- *
+ * Since there is no pairing the device must be found by scanning for available devices.
  * All devices that have been found during a scan (excluding ones that have been pruned)
- * be listed as part of device enumeration. This means devices may no longer be present.
+ * will be listed as part of device enumeration. This means devices may no longer be present.
  * Such as an iPhone being seen during scanning and later the owner of the phone leaving
- * the room. There are no OS level events to notify that this has happened. At which
- * point the seen device cache may be stale.
+ * the room. There are no OS level events to notify that this has happened.
  *
- * The other way a scan can be initiated is by trying to connect to a device that has
- * not been seen. Opening a device requires specifying the UUID of the device and if
+ * When necessary, a scan can be initiated is by trying to connect to a device.
+ * Opening a device requires specifying a device identifier or service UUID and if
  * not found a scan will be started internally for either the duration of the timeout
  * or until the device has been found. This can cause a delay between trying to open
  * a device and receiving CONNECT or ERROR events.
+ *
+ * Device identifiers will vary between OS's. macOS for example assigns a device specific
+ * UUID to devices it sees. Android returns the device's MAC address. There is no way
+ * to read a device's MAC address on macOS. Identifiers are subject to change periodically.
+ * iOS will randomly change the device's MAC address every few hours to prevent tracking.
  *
  * BLE devices provide services and there can be multiple services. Services provide
  * characteristics and there can be multiple characteristics per service. Both
@@ -79,10 +82,10 @@ __BEGIN_DECLS
  * the Bluetooth GATT specifications.
  *
  * Since there are multiple, potentially, read and write end points it is required
- * to specify the service and characteristic UUIDs. A write event much have them
+ * to specify the service and characteristic UUIDs. A write event must have them
  * specified using the M_io_meta_t and associated BLE meta functions. A read will
  * fill a provided meta object with the service and characteristic the data came from.
- * This means only the read and write meta functions can be use with BLE. The none-meta
+ * This means only the read and write meta functions can be use with BLE. The non-meta
  * functions will return an error.
  *
  * Characteristics can have multiple properties.
@@ -92,7 +95,7 @@ __BEGIN_DECLS
  * - Write
  * - Write without response
  *
- * BLE by default is not a stream based protocol like serial, HID, or Bluetooth classic.
+ * BLE by default is not a stream-based protocol like serial, HID, or Bluetooth classic.
  * Characteristics with the read property can be requested to read data. This is an async
  * request. M_io_ble facilitates this by using M_io_write_meta with a property indicator
  * that specifies data is not being written but a request for read is being sent.
@@ -105,13 +108,13 @@ __BEGIN_DECLS
  * a heart rate monitor could notify every 2 seconds even though it's reading every 100 ms. A
  * time service might send an event every second or it might send an event every minute.
  *
- * Characteristics won't receive read events be default. They need to be subscribed to first.
+ * Characteristics won't receive read events by default. They need to be subscribed to first.
  * Subscripts will not service a disconnect or destroy of an io object. Also, not all characteristics
  * support this property even if it supports read. Conversely some support notify/indicate but
  * not read.
  *
- * Write will write data to the device and the OS will issue an event whether the write as
- * successful or failed. Mstdlib uses this to determine if there was a write error and will
+ * Write will write data to the device and the OS will issue an event whether the write
+ * succeeded or failed. Mstdlib uses this to determine if there was a write error and will
  * block subsequent writes (returns WOULDBLOCK) until an outstanding write has completed.
  *
  * Write without response is a blind write. No result is requested from the OS. The state
@@ -122,11 +125,11 @@ __BEGIN_DECLS
  *
  * BLE events are only delivered to the main run loop. This is a design decision by Apple.
  * It is not possible to use an different run loop to receive events like can be done
- * with classic Bluetooth or HID. BLE events are none blocking so there shouldn't be
+ * with classic Bluetooth or HID. BLE events are non-blocking so there shouldn't be any
  * performance impact with the events being delivered. As little work as possible is
  * performed during event processing to limit any impact of this design requirement.
  *
- * A C application will need to manually start the macOS main runloop otherwise no events
+ * A C application will need to manually start the macOS main runloop, otherwise no events
  * will be delivered and no BLE operations will work.
  *
  * ### Examples
@@ -134,82 +137,90 @@ __BEGIN_DECLS
  * #### Application that scans for 30 seconds and enumerates all devices and their services that were seen.
  *
  * \code{.c}
- *     // Build:
- *     // clang -g -fobjc-arc -framework CoreFoundation test_ble_enum.c -I ../../include/ -L ../../build/lib/ -l mstdlib_io -l mstdlib_thread -l mstdlib
- *     //
- *     // Run:
- *     // DYLD_LIBRARY_PATH="../../build/lib/" ./a.out
+ * // Build:
+ * // clang -g -fobjc-arc -framework CoreFoundation test_ble_enum.c -I ../../include/ -L ../../build/lib/ -l mstdlib_io -l mstdlib_thread -l mstdlib
+ * //
+ * // Run:
+ * // DYLD_LIBRARY_PATH="../../build/lib/" ./a.out
  *
- *     #include <mstdlib/mstdlib.h>
- *     #include <mstdlib/mstdlib_thread.h>
- *     #include <mstdlib/mstdlib_io.h>
- *     #include <mstdlib/io/m_io_ble.h>
+ * #include <mstdlib/mstdlib.h>
+ * #include <mstdlib/mstdlib_thread.h>
+ * #include <mstdlib/mstdlib_io.h>
+ * #include <mstdlib/io/m_io_ble.h>
  *
- *     #include <CoreFoundation/CoreFoundation.h>
+ * #include <CoreFoundation/CoreFoundation.h>
  *
- *     M_event_t    *el;
- *     CFRunLoopRef  mrl = NULL;
+ * M_event_t    *el;
+ * CFRunLoopRef  mrl = NULL;
  *
- *     static void scan_done_cb(M_event_t *event, M_event_type_t type, M_io_t *io, void *cb_arg)
- *     {
- *         M_io_ble_enum_t *btenum;
- *         size_t           len;
- *         size_t           i;
+ * static void scan_done_cb(M_event_t *event, M_event_type_t type, M_io_t *io, void *cb_arg)
+ * {
+ *     M_io_ble_enum_t *btenum;
+ *     M_list_str_t    *service_uuids;
+ *     size_t           len;
+ *     size_t           len2;
+ *     size_t           i;
+ *     size_t           j;
  *
- *         (void)event;
- *         (void)type;
- *         (void)io;
- *         (void)cb_arg;
+ *     (void)event;
+ *     (void)type;
+ *     (void)io;
+ *     (void)cb_arg;
  *
- *         btenum = M_io_ble_enum();
+ *     btenum = M_io_ble_enum();
  *
- *         len = M_io_ble_enum_count(btenum);
- *         M_printf("Num devs = %zu\n", len);
- *         for (i=0; i<len; i++) {
- *             M_printf("Device:\n");
- *             M_printf("\tName: %s\n", M_io_ble_enum_name(btenum, i));
- *             M_printf("\tUUID: %s\n", M_io_ble_enum_uuid(btenum, i));
- *             M_printf("\tConnected: %s\n", M_io_ble_enum_connected(btenum, i)?"Yes":"No");
- *             M_printf("\tLast Seen: %llu\n", M_io_ble_enum_last_seen(btenum, i));
- *             M_printf("\tSerivce: %s\n", M_io_ble_enum_service_uuid(btenum, i));
+ *     len = M_io_ble_enum_count(btenum);
+ *     M_printf("Num devs = %zu\n", len);
+ *     for (i=0; i<len; i++) {
+ *         M_printf("Device:\n");
+ *         M_printf("\tName: %s\n", M_io_ble_enum_name(btenum, i));
+ *         M_printf("\tIdentifier: %s\n", M_io_ble_enum_identifier(btenum, i));
+ *         M_printf("\tLast Seen: %llu\n", M_io_ble_enum_last_seen(btenum, i));
+ *         M_printf("\tSerivces:\n");
+ *         service_uuids = M_io_ble_enum_service_uuids(btenum, i);
+ *         len2 = M_list_str_len(service_uuids);
+ *         for (j=0; j<len2; j++) {
+ *             M_printf("\t\t: %s\n", M_list_str_at(service_uuids, j));
  *         }
- *
- *         M_io_ble_enum_destroy(btenum);
- *
- *         if (mrl != NULL)
- *             CFRunLoopStop(mrl);
+ *         M_list_str_destroy(service_uuids);
  *     }
  *
- *     static void *run_el(void *arg)
- *     {
- *         (void)arg;
- *         M_event_loop(el, M_TIMEOUT_INF);
- *         return NULL;
- *     }
+ *     M_io_ble_enum_destroy(btenum);
  *
- *     int main(int argc, char **argv)
- *     {
- *         M_threadid_t     el_thread;
- *         M_thread_attr_t *tattr;
+ *     if (mrl != NULL)
+ *         CFRunLoopStop(mrl);
+ * }
  *
- *         el = M_event_create(M_EVENT_FLAG_NONE);
+ * static void *run_el(void *arg)
+ * {
+ *     (void)arg;
+ *     M_event_loop(el, M_TIMEOUT_INF);
+ *     return NULL;
+ * }
  *
- *         tattr = M_thread_attr_create();
- *         M_thread_attr_set_create_joinable(tattr, M_TRUE);
- *         el_thread = M_thread_create(tattr, run_el, NULL);
- *         M_thread_attr_destroy(tattr);
+ * int main(int argc, char **argv)
+ * {
+ *     M_threadid_t     el_thread;
+ *     M_thread_attr_t *tattr;
  *
- *         M_io_ble_scan(el, scan_done_cb, NULL, 30000);
+ *     el = M_event_create(M_EVENT_FLAG_NONE);
  *
- *         mrl = CFRunLoopGetCurrent();
- *         CFRunLoopRun();
+ *     tattr = M_thread_attr_create();
+ *     M_thread_attr_set_create_joinable(tattr, M_TRUE);
+ *     el_thread = M_thread_create(tattr, run_el, NULL);
+ *     M_thread_attr_destroy(tattr);
  *
- *         // 5 sec timeout.
- *         M_event_done_with_disconnect(el, 5*1000);
- *         M_thread_join(el_thread, NULL);
+ *     M_io_ble_scan(el, scan_done_cb, NULL, 30000);
  *
- *         return 0;
- *     }
+ *     mrl = CFRunLoopGetCurrent();
+ *     CFRunLoopRun();
+ *
+ *     // 5 sec timeout.
+ *     M_event_done_with_disconnect(el, 5*1000);
+ *     M_thread_join(el_thread, NULL);
+ *
+ *     return 0;
+ * }
  * \endcode
  *
  * #### Application that scans for 30 seconds and connects to a specified device which has been seen and cached (hopefully).
@@ -229,7 +240,7 @@ __BEGIN_DECLS
  * #include <CoreFoundation/CoreFoundation.h>
  *
  * M_event_t    *el;
- * M_io_t       *io;
+ * M_io_t       *dio;
  * CFRunLoopRef  mrl = NULL;
  *
  * void events(M_event_t *el, M_event_type_t etype, M_io_t *io, void *thunk)
@@ -244,7 +255,7 @@ __BEGIN_DECLS
  *             break;
  *         case M_EVENT_TYPE_DISCONNECTED:
  *             M_printf("DISCONNECTED!!!\n");
- *             M_io_destroy(io);
+ *             M_io_destroy(dio);
  *             if (mrl != NULL)
  *                 CFRunLoopStop(mrl);
  *             break;
@@ -253,7 +264,7 @@ __BEGIN_DECLS
  *         case M_EVENT_TYPE_ACCEPT:
  *             break;
  *         case M_EVENT_TYPE_ERROR:
- *             M_io_destroy(io);
+ *             M_io_destroy(dio);
  *             if (mrl != NULL)
  *                 CFRunLoopStop(mrl);
  *             break;
@@ -274,8 +285,8 @@ __BEGIN_DECLS
  *     (void)cb_arg;
  *
  *     // XXX: Set the id to the device you want to connect to.
- *     M_io_ble_create(&io, "92BD9AC6-3BC8-4B24-8BF8-AE583AFE3ED4", 5000);
- *     M_event_add(el, io, events, NULL);
+ *     M_io_ble_create(&dio, "92BD9AC6-3BC8-4B24-8BF8-AE583AFE3ED4", 5000);
+ *     M_event_add(el, dio, events, NULL);
  *
  *     M_printf("SCAN DONE\n");
  * }
@@ -328,7 +339,7 @@ __BEGIN_DECLS
  * #include <CoreFoundation/CoreFoundation.h>
  *
  * M_event_t    *el;
- * M_io_t       *io;
+ * M_io_t       *dio;
  * CFRunLoopRef  mrl = NULL;
  *
  * void events(M_event_t *el, M_event_type_t etype, M_io_t *io, void *thunk)
@@ -340,7 +351,7 @@ __BEGIN_DECLS
  *     switch (etype) {
  *         case M_EVENT_TYPE_CONNECTED:
  *             M_printf("CONNECTED!!!\n");
- *             M_io_disconnect(io);
+ *             M_io_disconnect(dio);
  *             break;
  *         case M_EVENT_TYPE_DISCONNECTED:
  *             M_printf("DISCONNECTED!!!\n");
@@ -348,7 +359,7 @@ __BEGIN_DECLS
  *         case M_EVENT_TYPE_WRITE:
  *         case M_EVENT_TYPE_ACCEPT:
  *         case M_EVENT_TYPE_ERROR:
- *             M_io_destroy(io);
+ *             M_io_destroy(dio);
  *             if (mrl != NULL)
  *                 CFRunLoopStop(mrl);
  *             break;
@@ -377,8 +388,8 @@ __BEGIN_DECLS
  *     M_thread_attr_destroy(tattr);
  *
  *     // XXX: Set the id to the device you want to connect to.
- *     M_io_ble_create(&io, "92BD9AC6-3BC8-4B24-8BF8-AE583AFE3ED4", 5000);
- *     M_event_add(el, io, events, NULL);
+ *     M_io_ble_create(&dio, "92BD9AC6-3BC8-4B24-8BF8-AE583AFE3ED4", 5000);
+ *     M_event_add(el, dio, events, NULL);
  *
  *     mrl = CFRunLoopGetCurrent();
  *     CFRunLoopRun();
@@ -386,6 +397,106 @@ __BEGIN_DECLS
  *     M_event_done_with_disconnect(el, 5*1000);
  *     M_thread_join(el_thread, NULL);
  *
+ *     return 0;
+ * }
+ * \endcode
+ *
+ * #### Application that lists services and their characteristics for a specific device
+ *
+ * \code{.c}
+ * // Build:
+ * // clang -g -fobjc-arc -framework CoreFoundation test_ble_interrogate.c -I ../../include/ -L ../../build/lib/ -l mstdlib_io -l mstdlib_thread -l mstdlib
+ * //
+ * // Run:
+ * // DYLD_LIBRARY_PATH="../../build/lib/" ./a.out
+ * 
+ * #include <mstdlib/mstdlib.h>
+ * #include <mstdlib/mstdlib_thread.h>
+ * #include <mstdlib/mstdlib_io.h>
+ * #include <mstdlib/io/m_io_ble.h>
+ * 
+ * #include <CoreFoundation/CoreFoundation.h>
+ * 
+ * M_event_t    *el;
+ * M_io_t       *dio;
+ * CFRunLoopRef  mrl = NULL;
+ * 
+ * void events(M_event_t *el, M_event_type_t etype, M_io_t *io, void *thunk)
+ * {
+ *     M_list_str_t *services;
+ *     M_list_str_t *characteristics;
+ *     size_t        len;
+ *     size_t        len2;
+ *     size_t        i;
+ *     size_t        j;
+ * 
+ *     (void)el;
+ *     (void)io;
+ *     (void)thunk;
+ * 
+ *     switch (etype) {
+ *         case M_EVENT_TYPE_CONNECTED:
+ *             M_printf("CONNECTED!!!\n");
+ * 
+ *             services = M_io_ble_get_services(dio);
+ *             len      = M_list_str_len(services);
+ *             for (i=0; i<len; i++) {
+ *                 M_printf("service = %s:\n", M_list_str_at(services, i));
+ *                 characteristics = M_io_ble_get_service_characteristics(dio, M_list_str_at(services, i));
+ *                 len2            = M_list_str_len(characteristics);
+ *                 for (j=0; j<len2; j++) {
+ *                     M_printf("\t%s\n", M_list_str_at(characteristics, j));
+ *                 }
+ *                 M_list_str_destroy(characteristics);
+ *             }
+ *             M_list_str_destroy(services);
+ * 
+ *             M_io_disconnect(dio);
+ *             break;
+ *         case M_EVENT_TYPE_DISCONNECTED:
+ *             M_printf("DISCONNECTED!!!\n");
+ *         case M_EVENT_TYPE_READ:
+ *         case M_EVENT_TYPE_WRITE:
+ *         case M_EVENT_TYPE_ACCEPT:
+ *         case M_EVENT_TYPE_ERROR:
+ *             M_io_destroy(dio);
+ *             if (mrl != NULL)
+ *                 CFRunLoopStop(mrl);
+ *             break;
+ *         case M_EVENT_TYPE_OTHER:
+ *             break;
+ *     }
+ * }
+ * 
+ * static void *run_el(void *arg)
+ * {
+ *     (void)arg;
+ *     M_event_loop(el, M_TIMEOUT_INF);
+ *     return NULL;
+ * }
+ * 
+ * int main(int argc, char **argv)
+ * {
+ *     M_threadid_t     el_thread;
+ *     M_thread_attr_t *tattr;
+ * 
+ *     el = M_event_create(M_EVENT_FLAG_NONE);
+ * 
+ *     tattr = M_thread_attr_create();
+ *     M_thread_attr_set_create_joinable(tattr, M_TRUE);
+ *     el_thread = M_thread_create(tattr, run_el, NULL);
+ *     M_thread_attr_destroy(tattr);
+ * 
+ *     // XXX: Set the id to the device you want to connect to.
+ *     M_io_ble_create(&dio, "92BD9AC6-3BC8-4B24-8BF8-AE583AFE3ED4", 5000);
+ *     M_event_add(el, dio, events, NULL);
+ * 
+ *     mrl = CFRunLoopGetCurrent();
+ *     CFRunLoopRun();
+ * 
+ *     M_event_done_with_disconnect(el, 5*1000);
+ *     M_thread_join(el_thread, NULL);
+ * 
  *     return 0;
  * }
  * \endcode
@@ -434,7 +545,7 @@ __BEGIN_DECLS
  *             M_io_read_meta(dio, msg, sizeof(msg)-1, &len, rmeta);
  *             msg[len]            = '\0';
  *             service_uuid        = M_io_ble_meta_get_service(dio, rmeta);
- *             characteristic_uuid = M_io_ble_meta_get_charateristic(dio, rmeta);
+ *             characteristic_uuid = M_io_ble_meta_get_characteristic(dio, rmeta);
  *
  *             M_printf("%s - %s: %s\n", service_uuid, characteristic_uuid, msg);
  *
@@ -485,7 +596,7 @@ __BEGIN_DECLS
  *     wmeta = M_io_meta_create();
  *     M_io_ble_meta_set_write_type(dio, wmeta, M_IO_BLE_WTYPE_REQVAL);
  *     M_io_ble_meta_set_service(dio, wmeta, "1111");
- *     M_io_ble_meta_set_charateristic(dio, wmeta, "2222");
+ *     M_io_ble_meta_set_characteristic(dio, wmeta, "2222");
  *     M_event_add(el, dio, events, NULL);
  *
  *     mrl = CFRunLoopGetCurrent();
@@ -508,49 +619,66 @@ __BEGIN_DECLS
  * //
  * // Run:
  * // DYLD_LIBRARY_PATH="../../build/lib/" ./a.out
- *
+ * 
  * #include <mstdlib/mstdlib.h>
  * #include <mstdlib/mstdlib_thread.h>
  * #include <mstdlib/mstdlib_io.h>
  * #include <mstdlib/io/m_io_ble.h>
- *
+ * 
  * #include <CoreFoundation/CoreFoundation.h>
- *
+ * 
  * M_event_t    *el;
  * M_io_t       *dio;
  * CFRunLoopRef  mrl = NULL;
- *
+ * 
  * void events(M_event_t *el, M_event_type_t etype, M_io_t *io, void *thunk)
  * {
  *     M_int64      rssi  = M_INT64_MIN;
- *     M_io_meta_t *rmeta = NULL;
+ *     M_io_meta_t *meta = NULL;
  *     const char  *service_uuid;
  *     const char  *characteristic_uuid;
  *     char         msg[256];
  *     size_t       len;
- *
+ * 
  *     (void)el;
  *     (void)io;
  *     (void)thunk;
- *
+ * 
  *     switch (etype) {
  *         case M_EVENT_TYPE_CONNECTED:
  *             M_printf("CONNECTED!!!\n");
+ * 
  *             // XXX: Set notify service and characteristic.
- *             M_io_ble_set_notify(dio, "1111", "2222", M_TRUE);
+ *             meta = M_io_meta_create();
+ *             M_io_ble_meta_set_write_type(dio, meta, M_IO_BLE_WTYPE_REQNOTIFY);
+ *             M_io_ble_meta_set_service(dio, meta, "1111");
+ *             M_io_ble_meta_set_characteristic(dio, meta, "2222");
+ *             M_io_write_meta(dio, NULL, 0, NULL, meta);
+ *             M_io_meta_destroy(meta);
  *             break;
  *         case M_EVENT_TYPE_READ:
- *             rmeta = M_io_meta_create();
- *             M_io_read_meta(dio, msg, sizeof(msg), &len, rmeta);
+ *             meta = M_io_meta_create();
+ * 
+ *             if (M_io_read_meta(dio, msg, sizeof(msg), &len, meta) != M_IO_ERROR_SUCCESS) {
+ *                 M_io_meta_destroy(meta);
+ *                 break;
+ *             }
+ *             if (M_io_ble_meta_get_read_type(dio, meta) == M_IO_BLE_RTYPE_NOTIFY) {
+ *                 M_printf("Notify enabled\n");
+ *                 M_io_meta_destroy(meta);
+ *                 break;
+ *             } else if (M_io_ble_meta_get_read_type(dio, meta) != M_IO_BLE_RTYPE_READ) {
+ *                 M_io_meta_destroy(meta);
+ *                 break;
+ *             }
+ * 
  *             msg[len]            = '\0';
- *             service_uuid        = M_io_ble_meta_get_service(dio, rmeta);
- *             characteristic_uuid = M_io_ble_meta_get_charateristic(dio, rmeta);
- *
+ *             service_uuid        = M_io_ble_meta_get_service(dio, meta);
+ *             characteristic_uuid = M_io_ble_meta_get_characteristic(dio, meta);
+ * 
  *             M_printf("%s - %s: %s\n", service_uuid, characteristic_uuid, msg);
- *
- *             M_io_meta_destroy(rmeta);
- *
- *             M_thread_sleep(100000);
+ * 
+ *             M_io_meta_destroy(meta);
  *             break;
  *         case M_EVENT_TYPE_WRITE:
  *             break;
@@ -569,36 +697,36 @@ __BEGIN_DECLS
  *             break;
  *     }
  * }
- *
+ * 
  * static void *run_el(void *arg)
  * {
  *     (void)arg;
  *     M_event_loop(el, M_TIMEOUT_INF);
  *     return NULL;
  * }
- *
+ * 
  * int main(int argc, char **argv)
  * {
  *     M_threadid_t     el_thread;
  *     M_thread_attr_t *tattr;
- *
+ * 
  *     el = M_event_create(M_EVENT_FLAG_NONE);
- *
+ * 
  *     tattr = M_thread_attr_create();
  *     M_thread_attr_set_create_joinable(tattr, M_TRUE);
  *     el_thread = M_thread_create(tattr, run_el, NULL);
  *     M_thread_attr_destroy(tattr);
- *
+ * 
  *     // XXX: Set the id to the device you want to connect to.
  *     M_io_ble_create(&dio, "92BD9AC6-3BC8-4B24-8BF8-AE583AFE3ED4", 5000);
  *     M_event_add(el, dio, events, NULL);
- *
+ * 
  *     mrl = CFRunLoopGetCurrent();
  *     CFRunLoopRun();
- *
+ * 
  *     M_event_done_with_disconnect(el, 5*1000);
  *     M_thread_join(el_thread, NULL);
- *
+ * 
  *     return 0;
  * }
  * \endcode
@@ -790,7 +918,7 @@ __BEGIN_DECLS
  *     M_io_ble_create(&dio, "92BD9AC6-3BC8-4B24-8BF8-AE583AFE3ED4", 5000);
  *     meta = M_io_meta_create();
  *     M_io_ble_meta_set_service(dio, meta, "1111");
- *     M_io_ble_meta_set_charateristic(dio, meta, "2222");
+ *     M_io_ble_meta_set_characteristic(dio, meta, "2222");
  *     M_event_add(el, dio, events, NULL);
  *
  *     mrl = CFRunLoopGetCurrent();
@@ -817,7 +945,8 @@ typedef enum {
 	M_IO_BLE_WTYPE_REQVAL,      /*!< Request value for service and characteristic. Not
 	                                 an actual write but a pseudo write to poll for a
 	                                 read event. */
-	M_IO_BLE_WTYPE_REQRSSI      /*!< Request RSSI value. */
+	M_IO_BLE_WTYPE_REQRSSI,     /*!< Request RSSI value. */
+	M_IO_BLE_WTYPE_REQNOTIFY    /*!< Request to change notify state. */
 } M_io_ble_wtype_t;
 
 
@@ -828,11 +957,13 @@ typedef enum {
 typedef enum {
 	M_IO_BLE_RTYPE_READ = 0, /*!< Regular read of data from service and characteristic. */
 	M_IO_BLE_RTYPE_RSSI,     /*!< RSSI data read. Use M_io_ble_meta_get_rssi. */
+	M_IO_BLE_RTYPE_NOTIFY    /*!< Notify state changed. */
 } M_io_ble_rtype_t;
 
 
 struct M_io_ble_enum;
 typedef struct M_io_ble_enum M_io_ble_enum_t;
+
 
 /*! Start a BLE scan.
  *
@@ -895,6 +1026,16 @@ M_API void M_io_ble_enum_destroy(M_io_ble_enum_t *btenum);
 M_API size_t M_io_ble_enum_count(const M_io_ble_enum_t *btenum);
 
 
+/*! UUID of ble device.
+ *
+ * \param[in] btenum Bluetooth enumeration object.
+ * \param[in] idx    Index in ble enumeration.
+ *
+ * \return String.
+ */
+M_API const char *M_io_ble_enum_identifier(const M_io_ble_enum_t *btenum, size_t idx);
+
+
 /*! Name of ble device as reported by the device.
  *
  * \param[in] btenum Bluetooth enumeration object.
@@ -905,40 +1046,17 @@ M_API size_t M_io_ble_enum_count(const M_io_ble_enum_t *btenum);
 M_API const char *M_io_ble_enum_name(const M_io_ble_enum_t *btenum, size_t idx);
 
 
-/*! UUID of ble device.
+/*! UUIDs of services reported by device.
  *
- * \param[in] btenum Bluetooth enumeration object.
- * \param[in] idx    Index in ble enumeration.
- *
- * \return String.
- */
-M_API const char *M_io_ble_enum_uuid(const M_io_ble_enum_t *btenum, size_t idx);
-
-
-/*! Whether the device is connected.
- *
- * This does not mean it is currently in use. It means the device is present
- * and connected to the OS. This is mainly a way to determine if a device
- * in the enumeration is still within range and can be used.
- *
- * Not all systems are able to report the connected status making this function
- * less useful than you would think.
- *
- * \return M_TRUE if the device is connected, otherwise M_FALSE.
- *         If it is not possible to determine the connected status this
- *         function will return M_TRUE.
- */
-M_API M_bool M_io_ble_enum_connected(const M_io_ble_enum_t *btenum, size_t idx);
-
-
-/*! Uuid of service reported by device.
+ * This could be empty if the device has not been opened. Some devices
+ * do not advertise this unless they are opened and interrogated.
  *
  * \param[in]  btenum Bluetooth enumeration object.
  * \param[in]  idx    Index in ble enumeration.
  *
- * \return String.
+ * \return String list of UUIDs.
  */
-M_API const char *M_io_ble_enum_service_uuid(const M_io_ble_enum_t *btenum, size_t idx);
+M_API M_list_str_t *M_io_ble_enum_service_uuids(const M_io_ble_enum_t *btenum, size_t idx);
 
 
 /*! Last time the device was seen.
@@ -957,30 +1075,29 @@ M_API M_time_t M_io_ble_enum_last_seen(const M_io_ble_enum_t *btenum, size_t idx
 /*! Create a ble connection.
  *
  * \param[out] io_out     io object for communication.
- * \param[in]  uuid       Required uuid of the device.
+ * \param[in]  identifier Required identifier of the device.
  * \param[in]  timeout_ms If the device has not already been seen a scan will
  *                        be performed. This time out is how long we should
  *                        wait to search for the device.
  *
  * \return Result.
  */
-M_API M_io_error_t M_io_ble_create(M_io_t **io_out, const char *uuid, M_uint64 timeout_ms);
+M_API M_io_error_t M_io_ble_create(M_io_t **io_out, const char *identifier, M_uint64 timeout_ms);
 
 
-
-/*! Request read event's when the characteristic's value changes.
+/*! Create a ble connection to a device that provides a given service.
  *
- * Not all characteristic's support notifications. If not supported polling with M_io_write_meta
- * using M_IO_BLE_WTYPE_REQVAL is the only way to retrieve the current value.
+ * This connects to the first device found exposing the requested service.
  *
- * \param[in] io                  io object.
- * \param[in] service_uuid        UUID of service.
- * \param[in] characteristic_uuid UUID of characteristic.
- * \param[in] enable              Receive notifications?
+ * \param[out] io_out      io object for communication.
+ * \param[in] service_uuid UUID of service.
+ * \param[in]  timeout_ms  If the device has not already been seen a scan will
+ *                         be performed. This time out is how long we should
+ *                         wait to search for the device.
  *
- * \return Result
+ * \return Result.
  */
-M_API M_io_error_t M_io_ble_set_notify(M_io_t *io, const char *service_uuid, const char *characteristic_uuid, M_bool enable);
+M_API M_io_error_t M_io_ble_create_with_service(M_io_t **io_out, const char *service_uuid, M_uint64 timeout_ms);
 
 
 /*! Get a list of service UUIDs provided by the device.
@@ -1030,7 +1147,7 @@ M_API const char *M_io_ble_meta_get_service(M_io_t *io, M_io_meta_t *meta);
  *
  * \return UUID
  */
-M_API const char *M_io_ble_meta_get_charateristic(M_io_t *io, M_io_meta_t *meta);
+M_API const char *M_io_ble_meta_get_characteristic(M_io_t *io, M_io_meta_t *meta);
 
 
 /*! Get the write type.
@@ -1081,7 +1198,20 @@ M_API void M_io_ble_meta_set_service(M_io_t *io, M_io_meta_t *meta, const char *
  * \param[in] meta                Meta.
  * \param[in] characteristic_uuid UUID of characteristic.
  */
-M_API void M_io_ble_meta_set_charateristic(M_io_t *io, M_io_meta_t *meta, const char *characteristic_uuid);
+M_API void M_io_ble_meta_set_characteristic(M_io_t *io, M_io_meta_t *meta, const char *characteristic_uuid);
+
+
+/*! Set whether to receive notifications for characterisic data changes
+ *
+ * If not called the default is to enable notifications.
+ *
+ * Not all characteristic's support notifications. If not supported polling with M_io_write_meta
+ * using M_IO_BLE_WTYPE_REQVAL is the only way to retrieve the current value.
+ * \param[in] io     io object.
+ * \param[in] meta   Meta.
+ * \param[in] enable Enable or disable receiving notifications.
+ */
+M_API void M_io_ble_meta_set_notify(M_io_t *io, M_io_meta_t *meta, M_bool enable);
 
 
 /*! Set whether a write should be blind.
