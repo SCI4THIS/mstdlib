@@ -921,24 +921,29 @@ static void M_event_softevent_process(M_event_t *event)
 	}
 }
 
-
-static void M_event_done_with_disconnect_int(M_event_t *event, M_uint64 timeout_ms)
+static void M_event_done_with_disconnect_cb(M_event_t *event, M_event_type_t type, M_io_t *io_dummy, void *cb_arg)
 {
-	M_uint64           elapsed_ms;
-	M_hashtable_enum_t hashenum;
-	const void        *key     = NULL;
-	M_list_t          *ios     = NULL;
-	size_t             i;
+	M_uint64 disconnect_timeout_ms = (M_uint64)((M_uintptr)cb_arg);
+	M_uint64            elapsed_ms;
+	M_hashtable_enum_t  hashenum;
+	const void         *key     = NULL;
+	M_list_t           *ios     = NULL;
+	size_t              i;
 
-	if (event == NULL || event->type != M_EVENT_BASE_TYPE_LOOP)
-		return;
+	(void)type;
+	(void)io_dummy;
 
+	if (disconnect_timeout_ms == M_UINTPTR_MAX)
+		disconnect_timeout_ms = M_TIMEOUT_INF;
+
+	/* Executed from within the event loop */
 	M_event_lock(event);
+
 	elapsed_ms = M_time_elapsed(&event->u.loop.start_tv);
-	if (timeout_ms == M_TIMEOUT_INF || elapsed_ms + timeout_ms < event->u.loop.timeout_ms) {
-		event->u.loop.timeout_ms = elapsed_ms + timeout_ms;
+
+	if (disconnect_timeout_ms == M_TIMEOUT_INF || elapsed_ms + disconnect_timeout_ms < event->u.loop.timeout_ms) {
+		event->u.loop.timeout_ms = elapsed_ms + disconnect_timeout_ms;
 	}
-	event->u.loop.flags |= M_EVENT_FLAG_EXITONEMPTY|M_EVENT_FLAG_EXITONEMPTY_NOTIMERS;
 
 	/* Iterate across all registered IOs and issue a disconnect. We have to generate a
 	 * list first, then we have to check to ensure the io object hasn't been removed
@@ -961,25 +966,42 @@ static void M_event_done_with_disconnect_int(M_event_t *event, M_uint64 timeout_
 		}
 	}
 
-	/* Make sure we wake up the event object */
-	M_event_wake(event);
-
 	M_list_destroy(ios, M_TRUE);
 
 	M_event_unlock(event);
 }
 
 
-void M_event_done_with_disconnect(M_event_t *event, M_uint64 timeout_ms)
+static void M_event_done_with_disconnect_int(M_event_t *event, M_uint64 timeout_before_disconnect_ms, M_uint64 disconnect_timeout_ms)
+{
+	if (event == NULL || event->type != M_EVENT_BASE_TYPE_LOOP)
+		return;
+
+	/* Add timer to trigger disconnects after timeout period */
+	M_event_lock(event);
+
+	/* Exit when no more objects, except timers */
+	event->u.loop.flags |= M_EVENT_FLAG_EXITONEMPTY|M_EVENT_FLAG_EXITONEMPTY_NOTIMERS;
+
+	M_event_unlock(event);
+
+	/* Add timer to start issuing disconnects on owned objects */
+	if (disconnect_timeout_ms > M_UINTPTR_MAX)
+		disconnect_timeout_ms = M_UINTPTR_MAX;
+	M_event_timer_oneshot(event, timeout_before_disconnect_ms, M_TRUE, M_event_done_with_disconnect_cb, (void *)((M_uintptr)disconnect_timeout_ms));
+}
+
+
+void M_event_done_with_disconnect(M_event_t *event, M_uint64 timeout_before_disconnect_ms, M_uint64 disconnect_timeout_ms)
 {
 	if (event == NULL)
 		return;
 
 	if (event->type == M_EVENT_BASE_TYPE_LOOP) {
 		if (event->u.loop.parent) {
-			M_event_done_with_disconnect(event->u.loop.parent, timeout_ms);
+			M_event_done_with_disconnect(event->u.loop.parent, timeout_before_disconnect_ms, disconnect_timeout_ms);
 		} else {
-			M_event_done_with_disconnect_int(event, timeout_ms);
+			M_event_done_with_disconnect_int(event, timeout_before_disconnect_ms, disconnect_timeout_ms);
 		}
 		return;
 	}
@@ -987,7 +1009,7 @@ void M_event_done_with_disconnect(M_event_t *event, M_uint64 timeout_ms)
 	if (event->type == M_EVENT_BASE_TYPE_POOL) {
 		size_t i;
 		for (i=0; i<event->u.pool.thread_count; i++)
-			M_event_done_with_disconnect_int(&event->u.pool.thread_evloop[i], timeout_ms);
+			M_event_done_with_disconnect_int(&event->u.pool.thread_evloop[i], timeout_before_disconnect_ms, disconnect_timeout_ms);
 		return;
 	}
 }

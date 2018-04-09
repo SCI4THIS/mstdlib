@@ -28,7 +28,7 @@ function(_harden_check_compile_flag outvarname flag lang)
 endfunction()
 
 function(_harden_check_link_flag outvarname flag)
-	set(CMAKE_REQUIRED_FLAGS ${flag})
+	set(CMAKE_REQUIRED_LIBRARIES ${flag})
 	string(MAKE_C_IDENTIFIER "HAVE_${flag}" flagvar)
 	check_c_compiler_flag("" ${flagvar})
 	if (${flagvar})
@@ -39,10 +39,11 @@ function(_harden_check_link_flag outvarname flag)
 endfunction()
 
 
-set(_compile_flags)     # Flags to apply when compiling C/C++ code.
-set(_link_flags)        # Flags to apply to all links.
-set(_link_flags_exe)    # Flags to apply when linking executables.
-set(_link_flags_shared) # Flags to apply when linking shared libraries.
+set(_compile_flags)       # Flags to apply when compiling C/C++ code.
+set(_link_flags)          # Flags to apply to all links.
+set(_link_flags_exe)      # Flags to apply when linking executables.
+set(_link_flags_shared)   # Flags to apply when linking shared libraries.
+set(_link_flags_implicit) # Extra system link flags added at end of line for all targets.
 
 
 if (MSVC)
@@ -80,13 +81,10 @@ else ()
 			endif ()
 		endif ()
 
-		if (MINGW AND has_flag)
-			# MinGW has a bug where you need to explicitly link to -lssp in some cases when stack
+		if ((MINGW OR CMAKE_SYSTEM_NAME MATCHES "SunOS") AND has_flag)
+			# MinGW/Solaris require you to explicitly link to libssp in some cases when stack
 			# protector is enabled.
-			_harden_check_link_flag(has_flag "-lssp")
-			if (has_flag)
-				link_libraries(-lssp)
-			endif ()
+			list(APPEND _link_flags_implicit "-lssp")
 		endif ()
 	endif ()
 
@@ -177,13 +175,14 @@ endif ()
 
 
 # Check and set compiler flags.
+get_property(_enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
 foreach(flag ${_compile_flags})
 	_harden_check_compile_flag(has_flag "${flag}" "C")
 	if (has_flag)
 		string(APPEND CMAKE_C_FLAGS " ${flag}")
 	endif ()
 
-	if ("CXX" IN_LIST languages)
+	if ("CXX" IN_LIST _enabled_languages)
 		# If C++ is enabled as a language, add the compile flags to CXX flags too.
 		_harden_check_compile_flag(has_flag "${flag}" "CXX")
 		if (has_flag)
@@ -216,5 +215,16 @@ foreach (flag ${_link_flags_shared})
 	if (has_flag)
 		string(APPEND CMAKE_SHARED_LINKER_FLAGS " ${flag}")
 		string(APPEND CMAKE_MODULE_LINKER_FLAGS " ${flag}")
+	endif ()
+endforeach ()
+
+# Check and add to implicit system linker flags.
+foreach (flag ${_link_flags_implicit})
+	_harden_check_link_flag(has_flag "${flag}")
+	if (has_flag)
+		list(APPEND CMAKE_C_IMPLICIT_LINK_LIBRARIES "${flag}")
+		if ("CXX" IN_LIST _enabled_languages)
+			list(APPEND CMAKE_CXX_IMPLICIT_LINK_LIBRARIES "${flag}")
+		endif ()
 	endif ()
 endforeach ()

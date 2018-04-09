@@ -19,6 +19,7 @@ include(SystemExtensions)
 include(InstallDepLibs)
 include(InstallExports) # Provides install_exports()
 include(SetPackageName) # Provides set_package_name()
+include(MingwCompat)    # Provides convert_mingw_implibs_to_vs()
 
 include(AddressSanitizer) # Provides M_ASAN option, if supported by compiler
 include(Harden)
@@ -50,7 +51,7 @@ option(MSTDLIB_STATIC          "Build as a static library"                      
 option(MSTDLIB_STATIC_PIC      "Build the static library as PIC (position independent)" FALSE)
 option(MSTDLIB_INSTALL_HEADERS "Install headers"                                        TRUE)
 option(MSTDLIB_INSTALL_LIBS    "Install libraries"                                      TRUE)
-option(MSTDLIB_INSTALL_EXPORTS "Install export file"                                    ${MSTDLIB_INSTALL_LIBS})
+option(MSTDLIB_INSTALL_EXPORTS "Install export file"                                    ${MSTDLIB_INSTALL_HEADERS})
 option(MSTDLIB_BUILD_TESTS     "Build tests"                                            TRUE)
 option(MSTDLIB_BUILD_DOCS      "Build doxygen docs"                                     TRUE)
 option(MSTDLIB_USE_VALGRIND    "Run tests with valgrind when running 'make check'"      ${valgrind_default})
@@ -402,8 +403,15 @@ endif ()
 set(lib_dest
 	RUNTIME DESTINATION bin
 	LIBRARY DESTINATION ${MSTDLIB_INSTALL_LOCATION_LIBS}
-	ARCHIVE DESTINATION ${MSTDLIB_INSTALL_LOCATION_LIBS}
 )
+# Note: only install static and import libs if we're installing headers - otherwise, this isn't
+#       intended to be a package you can actually build against, we're just distributing the
+#       libraries as chain-built dependencies.
+if (MSTDLIB_INSTALL_HEADERS)
+	list(APPEND lib_dest
+		ARCHIVE DESTINATION ${MSTDLIB_INSTALL_LOCATION_LIBS}
+	)
+endif ()
 
 if (WIN32)
 	# On windows, we want to place module DLL's in the same directory as the library DLL's.
@@ -418,7 +426,6 @@ else ()
 		# Intentionally leave out archive dest, don't want to install static versions of plugins.
 	)
 endif ()
-
 
 # Subdirs.
 add_subdirectory(include)

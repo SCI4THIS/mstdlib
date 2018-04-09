@@ -23,6 +23,9 @@
 
 /* Implementation for remote (TCP) syslog logging module.
  *
+ * TODO: most of the code in here should be refactored out into an m_event_writer_t class, because it
+ *       will be common to any event-based logging module. Wait to do this until we have more than
+ *       one event-based module.
  */
 #include "m_config.h"
 #include <m_log_int.h>
@@ -76,6 +79,11 @@ typedef struct {
 } module_thunk_t;
 
 
+static void timer_reconnect_cb(M_event_t *event, M_event_type_t type, M_io_t *io, void *thunk);
+
+static void io_event_cb(M_event_t *event, M_event_type_t type, M_io_t *io, void *thunk);
+
+
 static module_thunk_t *module_thunk_create(const char *product, M_syslog_facility_t facility, const char *host,
 	M_uint16 port, M_event_t *event, M_dns_t *dns, M_uint64 max_bytes, const char *line_end_str)
 {
@@ -122,6 +130,8 @@ static M_io_error_t module_thunk_reconnect(module_thunk_t *mdata)
 		return M_IO_ERROR_INVALID;
 	}
 
+	mdata->trigger = M_event_trigger_add(mdata->event, io_event_cb, mdata);
+
 	mdata->io = NULL;
 
 	ret = M_io_net_client_create(&mdata->io, mdata->dns, mdata->dest_host, mdata->port, M_IO_NET_ANY);
@@ -141,6 +151,9 @@ static void module_thunk_destroy(module_thunk_t *mdata)
 	if (mdata == NULL) {
 		return;
 	}
+
+	M_event_trigger_remove(mdata->trigger);
+	mdata->trigger = NULL;
 
 	M_io_destroy(mdata->io);
 
@@ -216,11 +229,31 @@ static void add_framed_message(M_buf_t *buf, const char *msg, module_thunk_t *md
 }
 
 
+static void get_next_message(module_thunk_t *mdata)
+{
+	char   *msg;
+	size_t  msg_len;
+
+	if (mdata->num_dropped > 0) {
+		char drop_msg[128] = {0};
+		M_snprintf(drop_msg, sizeof(drop_msg) - 1, "%llu messages were dropped (buffer full)\n",
+			(unsigned long long)mdata->num_dropped);
+		add_framed_message(mdata->msg_buf, drop_msg, mdata, M_SYSLOG_WARNING);
+		mdata->num_dropped = 0;
+	}
+
+	msg     = M_llist_str_take_node(M_llist_str_last(mdata->msgs));
+	msg_len = M_str_len(msg);
+
+	mdata->stored_bytes -= msg_len;
+
+	M_buf_add_bytes(mdata->msg_buf, msg, msg_len);
+
+	M_free(msg);
+}
+
 
 /* ---- PRIVATE: callbacks for internal IO object. ---- */
-
-static void timer_reconnect_cb(M_event_t *event, M_event_type_t type, M_io_t *io, void *thunk);
-
 
 static void io_event_cb(M_event_t *event, M_event_type_t type, M_io_t *io, void *thunk)
 {
@@ -239,9 +272,6 @@ static void io_event_cb(M_event_t *event, M_event_type_t type, M_io_t *io, void 
 			 * and stick it in the msg buf.
 			 */
 			if (M_buf_len(mdata->msg_buf) == 0) {
-				char   *msg;
-				size_t  msg_len;
-
 				/* stop_flag being set means that somebody requested a clean disconnect while we were in the middle of
 				 * sending a message. Now we're done sending the message, though, so go ahead and register the
 				 * disconnect.
@@ -260,22 +290,7 @@ static void io_event_cb(M_event_t *event, M_event_type_t type, M_io_t *io, void 
 					return;
 				}
 
-				if (mdata->num_dropped > 0) {
-					char drop_msg[128] = {0};
-					M_snprintf(drop_msg, sizeof(drop_msg) - 1, "%llu messages were dropped (buffer full)\n",
-						(unsigned long long)mdata->num_dropped);
-					add_framed_message(mdata->msg_buf, drop_msg, mdata, M_SYSLOG_WARNING);
-					mdata->num_dropped = 0;
-				}
-
-				msg     = M_llist_str_take_node(M_llist_str_last(mdata->msgs));
-				msg_len = M_str_len(msg);
-
-				mdata->stored_bytes -= msg_len;
-
-				M_buf_add_bytes(mdata->msg_buf, msg, msg_len);
-
-				M_free(msg);
+				get_next_message(mdata);
 			}
 
 			/* Ask TCP layer to send as much of the message as it can. */
@@ -486,7 +501,6 @@ static M_log_error_t log_resume_cb(M_log_module_t *mod, M_event_t *event)
 
 	mdata->suspend_flag = M_FALSE;
 	mdata->event        = event;
-	mdata->trigger      = M_event_trigger_add(mdata->event, io_event_cb, mdata);
 
 	module_thunk_reconnect(mdata);
 	M_event_add(mdata->event, mdata->io, io_event_cb, mdata);
@@ -535,9 +549,6 @@ static void log_destroy_cb(void *thunk, M_bool flush)
 		return;
 	}
 
-	M_event_trigger_remove(mdata->trigger);
-	mdata->trigger = NULL;
-
 	if (mdata->io == NULL) {
 		/* If io object is already destroyed (due to active suspend, or error), just kill the whole module thunk. */
 		module_thunk_destroy(mdata);
@@ -552,12 +563,14 @@ static void log_destroy_cb(void *thunk, M_bool flush)
 		/* The exit flag tells module thunk to destroy itself after the disconnect finishes, instead of reconnecting. */
 		mdata->exit_flag  = M_TRUE;
 
-		/* If we don't have a partial message pending, go ahead and queue up a disconnect event.
-		 * Otherwise, the stop_flag will ensure that a disconnect gets queued after the partial message
-		 * is fully sent.
+		/* If we don't have any messages left we need to write, go ahead and queue up a disconnect event.
+		 * Otherwise, the stop_flag will ensure that a disconnect gets queued by the event handler when
+		 * we're ready to disconnect.
 		 */
-		if (M_buf_len(mdata->msg_buf) == 0) {
+		if (M_buf_len(mdata->msg_buf) == 0 && (!flush || M_llist_str_len(mdata->msgs) == 0)) {
 			M_io_disconnect(mdata->io);
+		} else {
+			M_event_trigger_signal(mdata->trigger);
 		}
 
 		M_thread_mutex_unlock(mdata->msg_lock);
@@ -603,7 +616,6 @@ M_log_error_t M_log_module_add_tcp_syslog(M_log_t *log, const char *product, M_s
 		module_thunk_destroy(mdata);
 		return M_LOG_GENERIC_FAIL;
 	}
-	mdata->trigger = M_event_trigger_add(mdata->event, io_event_cb, mdata);
 
 	/* General module settings. */
 	mod                          = M_malloc_zero(sizeof(*mod));

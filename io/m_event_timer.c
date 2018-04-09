@@ -31,10 +31,16 @@ struct M_event_timer {
 	M_timeval_t          start_tv;
 	M_uint64             interval_ms;
 	size_t               fire_cnt;
-	M_bool               autodestroy; /* Either explicitly set, or set due to a self-destroy during execution */
+	M_bool               autodestroy;
+	M_bool               delay_destroy; /* Set due to a self-destroy during execution. 
+	                                     * Cannot overload autodestroy as another thread calling _start()
+	                                     * can cause odd behavior. */
 	M_event_timer_mode_t mode;
 	M_event_callback_t   callback;
 	void                *cb_data;
+	/* Callback and data to change to if the timer is executing. */
+	M_event_callback_t   callback_next;
+	void                *cb_data_next;
 
 	/* State data */
 	M_event_t           *event;
@@ -143,23 +149,40 @@ M_bool M_event_timer_remove(M_event_timer_t *timer)
 	if (timer == NULL || timer->event == NULL)
 		return M_FALSE;
 
+
 	event = timer->event;
+	M_event_lock(event);
 
 	/* Queue a destroy task to run for this in the owning event loop */
 	if (event->u.loop.threadid != 0 && event->u.loop.threadid != M_thread_self()) {
 		M_event_queue_task(event, M_event_timer_remove_cb, timer);
+
+		/* Stop the timer so it won't execute before it's destroyed.
+		 * In case destroy needs to be queued. */
+		timer->started = M_FALSE;
+
+		/* Since the timer->started flag is used as part of the sort operation,
+		 * we have to de-queue and re-enqueue the timer.  But if somehow the
+		 * timer is executing at the same time, we skip this since its not
+		 * in queue at all */
+		if (!timer->executing) {
+			M_event_timer_dequeue(timer);
+			M_event_timer_enqueue(timer);
+		}
+
+		M_event_unlock(event);
 		return M_TRUE; /* queued to remove */
 	}
 
-	M_event_lock(event);
 	if (timer->executing) {
-		/* Tell it to autodestroy at completion of execution instead of immediate destroy
-		 * as otherwise we'd free data that would still be used */
-		timer->fire_cnt    = 1;
-		timer->autodestroy = M_TRUE;
+		/* Timer is dequeued and currently executing so will be cleaned up at
+		 * the end of the callback */
+		timer->started       = M_FALSE;
+		timer->delay_destroy = M_TRUE;
 		M_event_unlock(event);
 		return M_TRUE;
 	}
+
 	M_event_timer_dequeue(timer);
 //M_printf("%s(): timer %p destroyed\n", __FUNCTION__, timer); fflush(stdout);
 
@@ -182,6 +205,31 @@ static void M_event_timer_remove_cb(M_event_t *event, M_event_type_t type, M_io_
 		return;
 
 	M_event_timer_remove(timer);
+}
+
+
+M_bool M_event_timer_edit_cb(M_event_timer_t *timer, M_event_callback_t callback, void *cb_data)
+{
+	if (timer == NULL || timer->event == NULL || callback == NULL)
+		return M_FALSE;
+
+	M_event_lock(timer->event);
+
+	/* If we're executing we can't change the callback
+	 * or data because we could end up with a thread
+	 * misread if we try to change it as it's being used.
+	 * We'll "queue" it to be changed once it's finished
+	 * executing. */
+	if (timer->executing) {
+		timer->callback_next = callback;
+		timer->cb_data_next  = cb_data;
+	} else {
+		timer->callback = callback;
+		timer->cb_data  = cb_data;
+	}
+
+	M_event_unlock(timer->event);
+	return M_TRUE;
 }
 
 
@@ -480,6 +528,18 @@ void M_event_timer_process(M_event_t *event)
 			M_event_lock(event);
 
 			timer->executing = M_FALSE;
+
+			/* If we have callback changes pending go ahead and
+			 * change them. The only time they'll be pending is
+			 * if they were set while executing was true. Basically,
+			 * when the callback and data was being used. */
+			if (timer->callback_next != NULL) {
+				timer->callback      = timer->callback_next;
+				timer->cb_data       = timer->cb_data_next;
+				timer->callback_next = NULL;
+				timer->cb_data_next  = NULL;
+			}
+
 			cnt++;
 		}
 
@@ -491,6 +551,12 @@ void M_event_timer_process(M_event_t *event)
 
 		/* If autodestroy and timer went to stopped mode, kill it */
 		if (!timer->started && timer->autodestroy) {
+			M_free(timer);
+			continue;
+		}
+
+		/* If self-deleted during the callback, cleanup now */
+		if (timer->delay_destroy) {
 			M_free(timer);
 			continue;
 		}
