@@ -131,6 +131,8 @@ M_io_layer_t *M_io_layer_at(M_io_t *io, size_t layer_id)
 	if (io == NULL)
 		return NULL;
 
+	if (layer_id == M_IO_LAYER_FIND_FIRST_ID)
+		layer_id = 0;
 	ptr = M_list_at(io->layer, layer_id);
 	if (ptr == NULL)
 		return NULL;
@@ -658,11 +660,14 @@ const char *M_io_layer_name(M_io_t *io, size_t idx)
 {
 	const M_io_layer_t *layer;
 	const char         *name = NULL;
+
 	if (io == NULL)
 		return NULL;
 
 	M_io_lock(io);
 
+	if (idx == M_IO_LAYER_FIND_FIRST_ID)
+		idx = 0;
 	layer = M_list_at(io->layer, idx);
 	if (layer != NULL)
 		name = layer->name;

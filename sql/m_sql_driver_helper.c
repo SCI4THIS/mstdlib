@@ -208,7 +208,7 @@ M_bool M_sql_driver_validate_connstr(const M_hash_dict_t *conndict, const M_sql_
 				if (!M_str_caseeq(val, "1") && !M_str_caseeq(val, "0") &&
 				    !M_str_caseeq(val, "y") && !M_str_caseeq(val, "n") &&
 				    !M_str_caseeq(val, "yes") && !M_str_caseeq(val, "no") &&
-				    !M_str_caseeq(val, "true") && !M_str_caseeq(val, "true") &&
+				    !M_str_caseeq(val, "true") && !M_str_caseeq(val, "false") &&
 				    !M_str_caseeq(val, "on") && !M_str_caseeq(val, "off")) {
 					M_snprintf(error, error_size, "param %s not boolean", key);
 					goto done;
@@ -298,7 +298,7 @@ M_sql_hostport_t *M_sql_driver_parse_hostport(const char *hostport, M_uint16 def
 			M_parser_consume(entries[i], 1); /* Eat Colon */
 			/* Trim */
 			M_parser_consume_whitespace(entries[i], M_PARSER_WHITESPACE_NONE);
-			if (!M_parser_read_uint(entries[i], M_PARSER_INTEGER_ASCII, M_parser_len(entries[i]), 10, &i64) || i64 >= (1 << 15) || i64 == 0) {
+			if (!M_parser_read_uint(entries[i], M_PARSER_INTEGER_ASCII, M_parser_len(entries[i]), 10, &i64) || i64 >= (1 << 16) || i64 == 0) {
 				M_snprintf(error, error_size, "Invalid port configuration for host %zu", i+1);
 				goto done;
 			}
@@ -393,10 +393,14 @@ M_sql_data_type_t M_sql_driver_stmt_bind_get_col_type(M_sql_stmt_t *stmt, size_t
 {
 	size_t row;
 	size_t num_rows        = M_sql_driver_stmt_bind_rows(stmt);
-	M_sql_data_type_t type = M_SQL_DATA_TYPE_NULL;
+	M_sql_data_type_t type = M_SQL_DATA_TYPE_UNKNOWN;
 
-	for (row = 0; row < num_rows && type == M_SQL_DATA_TYPE_NULL; row++) {
+	/* Iterate across incase someone decided to use something weird for null binding */
+	for (row = 0; row < num_rows; row++) {
 		type = M_sql_driver_stmt_bind_get_type(stmt, row, idx);
+
+		if (!M_sql_driver_stmt_bind_isnull(stmt, row, idx))
+			break;
 	}
 
 	return type;
@@ -437,12 +441,21 @@ size_t M_sql_driver_stmt_bind_get_max_col_size(M_sql_stmt_t *stmt, size_t idx)
 			}
 			return max_size;
 
-		case M_SQL_DATA_TYPE_NULL:
 		case M_SQL_DATA_TYPE_UNKNOWN:
 			break;
 	}
 
 	return 0;
+}
+
+
+M_bool M_sql_driver_stmt_bind_isnull(M_sql_stmt_t *stmt, size_t row, size_t idx)
+{
+	if (stmt == NULL || row >= M_sql_driver_stmt_bind_rows(stmt) ||
+	    idx >= M_sql_driver_stmt_bind_cnt(stmt)) {
+		return M_TRUE;
+	}
+	return stmt->bind_rows[row].cols[idx].isnull;
 }
 
 
@@ -573,6 +586,9 @@ size_t M_sql_driver_stmt_bind_get_text_len(M_sql_stmt_t *stmt, size_t row, size_
 
 	row += stmt->bind_row_offset; /* Multi-row partial execution */
 
+	if (stmt->bind_rows[row].cols[idx].isnull)
+		return 0;
+
 	return stmt->bind_rows[row].cols[idx].v.text.max_len;
 }
 
@@ -598,6 +614,9 @@ size_t M_sql_driver_stmt_bind_get_binary_len(M_sql_stmt_t *stmt, size_t row, siz
 	}
 
 	row += stmt->bind_row_offset; /* Multi-row partial execution */
+
+	if (stmt->bind_rows[row].cols[idx].isnull)
+		return 0;
 
 	return stmt->bind_rows[row].cols[idx].v.binary.len;
 }

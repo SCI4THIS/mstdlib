@@ -7,15 +7,26 @@
 #include <mstdlib/mstdlib_io.h>
 #include <mstdlib/mstdlib_tls.h>
 
-#define USE_SSL
-#define HOST "www.google.com"
+//#define USE_SSL
+//#define IDNA
 
 #ifdef USE_SSL
 #  define PORT 443
-#  define URL "https://www.google.com/"
+/* Note, www.google.com for some reason doesn't like FALLBACK_SCSV which we enable
+ * by default as of early 2018.  Seems like a google bug to me.  Lets use someone else. */
+#  define URL "https://www.twitter.com/"
+#  define HOST "www.twitter.com"
 #else
 #  define PORT 80
-#  define URL "http://www.google.com/"
+#  ifdef IDNA
+#    define HOST "domaintest.みんな"
+#    define URL "http://domaintest.みんな/"
+//#    define HOST "اختبارنطاق.شبكة"
+//#    define URL  "http://اختبارنطاق.شبكة/"
+#  else
+#    define URL  "http://www.google.com/"
+#    define HOST "www.google.com"
+#  endif
 #endif
 
 M_bool got_response = M_FALSE;
@@ -196,11 +207,13 @@ static void net_client_cb(M_event_t *event, M_event_type_t type, M_io_t *io, voi
 				char errmsg[256];
 				M_io_get_error_string(io, errmsg, sizeof(errmsg));
 				event_debug("net client %p errmsg: %s", io, errmsg);
+				ck_assert_msg(got_response, "No response, Received error '%s'", errmsg);
 			}
 			/* If we really didn't get a response, it is an error */
 			if (!got_response) {
 				M_event_return(event);
 				event_debug("net client %p ERROR", io);
+				M_io_destroy(io);
 				break;
 			}
 

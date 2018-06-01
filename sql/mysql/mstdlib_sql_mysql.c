@@ -461,6 +461,13 @@ static M_sql_error_t mysql_bind_params(M_sql_driver_stmt_t *driver_stmt, M_sql_s
 			driver_stmt->bind_params[paramid].is_unsigned = 0;
 			driver_stmt->bind_params[paramid].is_null     = (my_bool *)0;
 
+			if (M_sql_driver_stmt_bind_isnull(stmt, row, i)) {
+				driver_stmt->bind_params[paramid].buffer_type   = MYSQL_TYPE_NULL;
+				driver_stmt->bind_params[paramid].buffer        = NULL;
+				driver_stmt->bind_params[paramid].buffer_length = 0;
+				continue;
+			}
+
 			switch (M_sql_driver_stmt_bind_get_type(stmt, row, i)) {
 				case M_SQL_DATA_TYPE_BOOL:
 					driver_stmt->bind_params[paramid].buffer_type   = MYSQL_TYPE_TINY;
@@ -494,11 +501,6 @@ static M_sql_error_t mysql_bind_params(M_sql_driver_stmt_t *driver_stmt, M_sql_s
 					driver_stmt->bind_params[paramid].buffer        = M_CAST_OFF_CONST(M_uint8 *, p8u);
 					driver_stmt->bind_params[paramid].buffer_length = (unsigned long)M_sql_driver_stmt_bind_get_binary_len(stmt, row, i);
 					driver_stmt->bind_params[paramid].is_unsigned   = 1;
-					break;
-				case M_SQL_DATA_TYPE_NULL:
-					driver_stmt->bind_params[paramid].buffer_type   = MYSQL_TYPE_NULL;
-					driver_stmt->bind_params[paramid].buffer        = NULL;
-					driver_stmt->bind_params[paramid].buffer_length = 0;
 					break;
 				default:
 					err = M_SQL_ERROR_INVALID_USE;
@@ -1034,7 +1036,7 @@ static M_sql_driver_t M_sql_mysql = {
 	mysql_cb_createtable_suffix,  /* Callback used to append additional data to the Create Table query string */
 	mysql_cb_append_updlock,      /* Callback used to append row-level locking data */
 	mysql_cb_append_bitop,        /* Callback used to append a bit operation */
-
+	NULL,                         /* Callback used to rewrite an index name to comply with DB requirements */
 	NULL,                         /* Handle for loaded driver - must be initialized to NULL */
 };
 

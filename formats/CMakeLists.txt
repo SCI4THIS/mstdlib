@@ -34,6 +34,12 @@ set(sources
 	settings/m_settings_reader.c
 	settings/m_settings_writer.c
 
+	# table:
+	table/m_table.c
+	table/m_table_csv.c
+	table/m_table_json.c
+	table/m_table_markdown.c
+
 	# time:
 	time/m_mtzfile.c
 

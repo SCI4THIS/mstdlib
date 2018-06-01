@@ -61,6 +61,7 @@ set(tests
 	base/data/check_str.c
 	base/data/check_str_int64.c
 	base/data/check_str_uint64.c
+	base/data/check_utf8.c
 	base/fs/check_file.c
 	base/fs/check_path.c
 	base/hash/check_hash_dict.c
@@ -73,6 +74,7 @@ set(tests
 	base/math/check_rand.c
 	base/math/check_round.c
 	base/mem/check_mem.c
+	base/textcodec/check_puny.c
 	base/time/check_time_fmt.c
 	base/time/check_time_tm.c
 	base/time/check_time_tz.c
@@ -86,6 +88,7 @@ if (MSTDLIB_BUILD_FORMATS)
 		formats/check_json.c
 		formats/check_mtzfile.c
 		formats/check_settings.c
+		formats/check_table.c
 		formats/check_verify.c
 		formats/check_xml.c
 		formats/check_xml_entities.c
@@ -184,6 +187,11 @@ foreach (test_src ${tests})
 
 	add_executable(${test_prog} ${test_src})
 	target_link_libraries(${test_prog} PRIVATE ${test_deps})
+	if (MSVC)
+		# Some unit tests in here have embedded UTF-8 characters. Need to specify an extra flag to
+		# get VS to accept the file.
+		target_compile_options(${test_prog} PRIVATE -utf-8)
+	endif ()
 
 	if (WIN32 AND test_prog STREQUAL "check_sql")
 		target_compile_definitions(${test_prog} PRIVATE _CRT_SECURE_NO_DEPRECATE) #because check_sql uses getenv(...)

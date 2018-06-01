@@ -64,6 +64,14 @@ const M_sql_driver_t *M_sql_conn_get_driver(M_sql_conn_t *conn);
 M_uint64 M_sql_conn_duration_start_ms(M_sql_conn_t *conn);
 M_uint64 M_sql_conn_duration_last_ms(M_sql_conn_t *conn);
 
+void M_sql_conn_use_stmt(M_sql_conn_t *conn, M_sql_stmt_t *stmt);
+void M_sql_conn_release_stmt(M_sql_conn_t *conn);
+M_sql_stmt_t *M_sql_conn_get_curr_stmt(M_sql_conn_t *conn);
+M_uint64 M_sql_conn_duration_query_ms(M_sql_conn_t *conn);
+M_uint64 M_sql_conn_duration_trans_ms(M_sql_conn_t *conn);
+M_uint64 M_sql_conn_duration_trans_last_ms(M_sql_conn_t *conn);
+
+
 /*! Set the current connection state.
  *
  * \param[in] conn Connection acquired with M_sql_connpool_acquireconn()
@@ -145,6 +153,7 @@ void M_sql_connpool_remove_groupinsert(M_sql_connpool_t *pool, const char *query
 /*! Definition for statement bind column */
 typedef struct {
 	M_sql_data_type_t type;    /*!< Data type of column */
+	M_bool            isnull;  /*!< Column data is NULL */
 	union {
 		M_bool   b;            /*!< Used when type == M_SQL_DATA_TYPE_BOOL */
 		M_int16  i16;          /*!< Used when type == M_SQL_DATA_TYPE_INT16 */

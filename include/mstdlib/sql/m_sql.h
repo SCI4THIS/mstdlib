@@ -84,7 +84,7 @@ __BEGIN_DECLS
  *  - mysql_engine: Optional.  Used during table creation, defaults to INNODB.  The default
  *    data storage engine to use with mysql.  Typically it is recommended to leave
  *    this at the default.
- *  - mysql_charset: Optional.  Used during table creation, defaults to UTF8.
+ *  - mysql_charset: Optional.  Used during table creation, defaults to utfmb4.
  *  - max_isolation: Optional. Sets the maximum isolation level used for transactions.
  *    This is used to overwrite requests for SERIALIZABLE isolation levels,
  *    useful with Galera-based clusters that do not truly support Serializable
@@ -170,7 +170,7 @@ __BEGIN_DECLS
  *    to use with mysql.  Typically it is recommended to leave this at the
  *    default.
  *  - mysql_charset: Optional.  Used during table creation when the destination
- *    database is MySQL, defaults to UTF8.
+ *    database is MySQL, defaults to utf8mb4.
  */
 
 /*! \addtogroup m_sql_error SQL Error handling functions
@@ -264,6 +264,15 @@ M_API const char *M_sql_error_string(M_sql_error_t err);
  */
 M_API M_bool M_sql_error_is_error(M_sql_error_t err);
 
+/*! Returns if the error code is due to a fatal communications error.
+ *  If this occurs, the connection will be automatically destroyed and
+ *  next use will try to establish a new connection
+ *
+ *  \param[in] err Error to evaluate.
+ *  \return M_TRUE if connectivity failure, M_FALSE if not.
+ */
+M_API M_bool M_sql_error_is_disconnect(M_sql_error_t err);
+
 /*! Returns if the error code represents a rollback condition.
  *
  *  There may be multiple types of failures that are rollback conditions such
@@ -289,15 +298,6 @@ M_API M_bool M_sql_error_is_rollback(M_sql_error_t err);
  *  \return M_TRUE if fatal error, M_FALSE if not.
  */
 M_API M_bool M_sql_error_is_fatal(M_sql_error_t err);
-
-/*! Returns if the error code is due to a fatal communications error.
- *  If this occurs, the connection will be automatically destroyed and
- *  next use will try to establish a new connection
- *
- *  \param[in] err Error to evaluate.
- *  \return M_TRUE if connectivity failure, M_FALSE if not.
- */
-M_API M_bool M_sql_error_is_disconnect(M_sql_error_t err);
 
 
 /*! @} */
@@ -461,7 +461,7 @@ M_API M_sql_error_t M_sql_connpool_start(M_sql_connpool_t *pool, char *error, si
 M_API M_sql_error_t M_sql_connpool_destroy(M_sql_connpool_t *pool);
 
 
-/*! Count of active/connected SQL connections.
+/*! Count of active/connected SQL connections (but not ones that are in process of being brought online).
  * 
  *  \param[in] pool     Initialized pool object
  *  \param[in] readonly M_TRUE if querying for readonly connections, M_FALSE for primary
@@ -585,10 +585,6 @@ M_API M_uint64 M_sql_rollback_delay_ms(M_sql_connpool_t *pool);
 
 
 /*! @} */
-
-
-
-
 
 
 

@@ -97,6 +97,7 @@ typedef struct {
 	M_sql_driver_cb_createtable_suffix_odbc_t cb_createtable_suffix; /*!< Optional. Append CREATE TABLE suffix */
 	M_sql_driver_cb_append_updlock_t          cb_append_updlock;     /*!< Optional. Callback used to append row-level locking data */
 	M_sql_driver_cb_append_bitop_t            cb_append_bitop;       /*!< Required. Callback used to append a bit operation */
+	M_sql_driver_cb_rewrite_indexname_t       cb_rewrite_indexname;  /*!< Optional. Callback used to rewrite an index name to comply with DB requirements */
 } odbc_server_profile_t;
 
 
@@ -136,7 +137,8 @@ static const odbc_server_profile_t odbc_server_profiles[] = {
 		mssql_cb_datatype,            /* cb_datatype           */
 		NULL,                         /* cb_createtable_suffix */
 		mssql_cb_append_updlock,      /* cb_append_updlock     */
-		mssql_cb_append_bitop         /* cb_append_bitop       */
+		mssql_cb_append_bitop,        /* cb_append_bitop       */
+		NULL                          /* cb_rewrite_indexname  */
 	},
 
 	{ 
@@ -149,7 +151,8 @@ static const odbc_server_profile_t odbc_server_profiles[] = {
 		db2_cb_datatype,              /* cb_datatype           */
 		NULL,                         /* cb_createtable_suffix */
 		db2_cb_append_updlock,        /* cb_append_updlock     */
-		db2_cb_append_bitop           /* cb_append_bitop       */
+		db2_cb_append_bitop,          /* cb_append_bitop       */
+		NULL                          /* cb_rewrite_indexname  */
 	},
 
 	{ 
@@ -162,7 +165,8 @@ static const odbc_server_profile_t odbc_server_profiles[] = {
 		oracle_cb_datatype,           /* cb_datatype           */
 		NULL,                         /* cb_createtable_suffix */
 		oracle_cb_append_updlock,     /* cb_append_updlock     */
-		oracle_cb_append_bitop        /* cb_append_bitop       */
+		oracle_cb_append_bitop,       /* cb_append_bitop       */
+		oracle_cb_rewrite_indexname   /* cb_rewrite_indexname  */
 	},
 
 	{ 
@@ -175,7 +179,8 @@ static const odbc_server_profile_t odbc_server_profiles[] = {
 		mysql_cb_datatype,            /* cb_datatype           */
 		mysql_createtable_suffix,     /* cb_createtable_suffix */
 		mysql_cb_append_updlock,      /* cb_append_updlock     */
-		mysql_cb_append_bitop         /* cb_append_bitop       */
+		mysql_cb_append_bitop,        /* cb_append_bitop       */
+		NULL                          /* cb_rewrite_indexname  */
 	},
 
 	{ 
@@ -188,7 +193,8 @@ static const odbc_server_profile_t odbc_server_profiles[] = {
 		mysql_cb_datatype,            /* cb_datatype           */
 		mysql_createtable_suffix,     /* cb_createtable_suffix */
 		mysql_cb_append_updlock,      /* cb_append_updlock     */
-		mysql_cb_append_bitop         /* cb_append_bitop       */
+		mysql_cb_append_bitop,        /* cb_append_bitop       */
+		NULL                          /* cb_rewrite_indexname  */
 	},
 
 	{ 
@@ -201,10 +207,11 @@ static const odbc_server_profile_t odbc_server_profiles[] = {
 		pgsql_cb_datatype,            /* cb_datatype           */
 		NULL,                         /* cb_createtable_suffix */
 		pgsql_cb_append_updlock,      /* cb_append_updlock     */
-		pgsql_cb_append_bitop         /* cb_append_bitop       */
+		pgsql_cb_append_bitop,        /* cb_append_bitop       */
+		NULL                          /* cb_rewrite_indexname  */
 	},
 
-	{ NULL, M_FALSE, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL }
+	{ NULL, M_FALSE, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL }
 };
 
 
@@ -243,6 +250,7 @@ static M_sql_error_t odbc_err_to_error(M_sql_driver_conn_t *dconn, SQLINTEGER er
 		{ "HYT01", M_SQL_ERROR_CONN_LOST        }, /* Connection Timeout */
 		{ "40000", M_SQL_ERROR_QUERY_DEADLOCK   }, /* Transaction Rollback */
 		{ "40001", M_SQL_ERROR_QUERY_DEADLOCK   }, /* Serialization Failure */
+		{ "23000", M_SQL_ERROR_QUERY_CONSTRAINT }, /* Integrity constraint violation */
 		{ "40002", M_SQL_ERROR_QUERY_CONSTRAINT }, /* TRANSACTION INTEGRITY CONSTRAINT VIOLATION */
 		{ "40003", M_SQL_ERROR_QUERY_DEADLOCK   }, /* STATEMENT COMPLETION UNKNOWN */
 		{ "40P01", M_SQL_ERROR_QUERY_DEADLOCK   }, /* DEADLOCK DETECTED */
@@ -500,7 +508,9 @@ static M_sql_error_t odbc_cb_connect(M_sql_driver_conn_t **conn, M_sql_connpool_
 	char                        *connstr;
 	SQLSMALLINT                  outlen; /* Junk value */
 	size_t                       i;
+#if 0
 	SQLINTEGER                   auto_pop_ipd = SQL_FALSE;
+#endif
 
 	*conn              = M_malloc_zero(sizeof(**conn));
 	(*conn)->pool_data = data;
@@ -562,27 +572,35 @@ static M_sql_error_t odbc_cb_connect(M_sql_driver_conn_t **conn, M_sql_connpool_
 		goto done;
 	}
 
-	/* Determine if the driver supports automatic IPD (ability to get parameter data types) population */
-	rc = SQLGetConnectAttr((*conn)->dbc_handle, SQL_ATTR_AUTO_IPD, (SQLPOINTER)&auto_pop_ipd, SQL_IS_INTEGER, NULL);
-	if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
+/* We no longer need to derive the data type as we aren't doing NULL insertion trickery anymore */
 #if 0
-		/* NOTE: FreeTDS returns an error trying to retrieve this attribute, just assume not supported */
-		err = odbc_format_error("SQLGetConnectAttr(SQL_ATTR_AUTO_IPD) failed", *conn, NULL, rc, error, error_size);
-		goto done;
-#endif
+	/* Determine if the driver supports automatic IPD (ability to get parameter data types) population */
+	rc = SQLGetConnectAttr((*conn)->dbc_handle, SQL_ATTR_AUTO_IPD, (SQLPOINTER)&auto_pop_ipd, SQL_IS_UINTEGER, NULL);
+	if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
+		/* NOTE: FreeTDS returns an error trying to retrieve this attribute, just assume not supported
+		 * err = odbc_format_error("SQLGetConnectAttr(SQL_ATTR_AUTO_IPD) failed", *conn, NULL, rc, error, error_size);
+		 * goto done;
+		 */
 		auto_pop_ipd = SQL_FALSE;
 	}
 
 	if (auto_pop_ipd == SQL_TRUE) {
 #ifdef SQL_ATTR_ENABLE_AUTO_IPD /* DB2 PASE doesn't appear to have this */
 		/* Driver supports automatic IPD population, enable it! */
-		rc = SQLSetConnectAttr((*conn)->dbc_handle, SQL_ATTR_ENABLE_AUTO_IPD, (SQLPOINTER)SQL_TRUE, SQL_IS_INTEGER);
+		rc = SQLSetConnectAttr((*conn)->dbc_handle, SQL_ATTR_ENABLE_AUTO_IPD, (SQLPOINTER)SQL_TRUE, SQL_IS_UINTEGER);
 		if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
-			err = odbc_format_error("SQLSetConnectAttr(SQL_ATTR_ENABLE_AUTO_IPD=SQL_TRUE) failed", *conn, NULL, rc, error, error_size);
-			goto done;
+			M_sql_error_t myerr;
+			char          myerror[256];
+			myerr = odbc_format_error("SQLSetConnectAttr(SQL_ATTR_ENABLE_AUTO_IPD=SQL_TRUE) failed", *conn, NULL, rc, myerror, sizeof(myerror));
+			M_sql_driver_trace_message(M_FALSE /* Not debug */, pool, NULL, myerr, myerror);
+
+			/* Lets not treat this as a hard failure
+			 * goto done;
+			 */
 		}
 #endif
 	}
+#endif
 
 	/* Grab database name */
 	rc = SQLGetInfo((*conn)->dbc_handle, SQL_DBMS_NAME, (*conn)->dbms_name, sizeof((*conn)->dbms_name)-1, &outlen);
@@ -703,20 +721,19 @@ static void odbc_cb_prepare_destroy(M_sql_driver_stmt_t *dstmt)
 	if (dstmt == NULL)
 		return;
 
-	SQLFreeHandle(SQL_HANDLE_STMT, dstmt->stmt);
-
 	odbc_clear_driver_stmt(dstmt);
 
+	SQLFreeHandle(SQL_HANDLE_STMT, dstmt->stmt);
 
 	M_free(dstmt);
 }
 
 
-static void odbc_bind_set_type(M_sql_driver_stmt_t *dstmt, size_t col, M_sql_data_type_t type, SQLSMALLINT *ValueType, SQLSMALLINT *ParameterType)
+static M_bool odbc_bind_set_type(M_sql_data_type_t type, SQLSMALLINT *ValueType, SQLSMALLINT *ParameterType)
 {
-	SQLULEN     junk_size     = 0;
-	SQLSMALLINT junk_digits   = 0;
-	SQLSMALLINT junk_nullable = 0;
+	/* Uninitialized warning suppress (won't ever actually be used). */
+	*ValueType     = 0;
+	*ParameterType = 0;
 
 	switch (type) {
 		case M_SQL_DATA_TYPE_BOOL:
@@ -751,25 +768,22 @@ static void odbc_bind_set_type(M_sql_driver_stmt_t *dstmt, size_t col, M_sql_dat
 			*ParameterType            = SQL_LONGVARBINARY;
 			break;
 
-		case M_SQL_DATA_TYPE_UNKNOWN: /* Silence warning, should never get this */
-		case M_SQL_DATA_TYPE_NULL:
-			/* For some reason dbs are happier converting varbinary NULL to varchar NULL than vice-versa */
-			*ParameterType            = SQL_LONGVARBINARY;
-
-			/* For NULL values, get the parametertype to use -- ignore error, not all drivers support this*/
-			SQLDescribeParam(dstmt->stmt, (SQLUSMALLINT)(col+1), ParameterType, &junk_size, &junk_digits, &junk_nullable);
-
-			/* Its NULL, doesn't matter */
-			*ValueType                = SQL_C_DEFAULT;
-			break;
+		case M_SQL_DATA_TYPE_UNKNOWN:
+			return M_FALSE;
 	}
+	return M_TRUE;
 }
 
 
 static void odbc_bind_set_value_array(M_sql_stmt_t *stmt, size_t row, size_t col, size_t col_size, odbc_bind_cols_t *bcol)
 {
-	M_sql_data_type_t type = M_sql_driver_stmt_bind_get_type(stmt, row, col);
+	M_sql_data_type_t    type = M_sql_driver_stmt_bind_get_type(stmt, row, col);
 	const unsigned char *data;
+
+	if (M_sql_driver_stmt_bind_isnull(stmt, row, col)) {
+		bcol->lens[row] = SQL_NULL_DATA;
+		return;
+	}
 
 	switch (type) {
 		case M_SQL_DATA_TYPE_BOOL:
@@ -801,8 +815,6 @@ static void odbc_bind_set_value_array(M_sql_stmt_t *stmt, size_t row, size_t col
 			break;
 
 		case M_SQL_DATA_TYPE_UNKNOWN: /* Silence warning, should never get this */
-		case M_SQL_DATA_TYPE_NULL:
-			bcol->lens[row]         = SQL_NULL_DATA;
 			break;
 	}
 }
@@ -853,7 +865,7 @@ static M_sql_error_t odbc_bind_params_array(M_sql_driver_stmt_t *dstmt, M_sql_st
 
 	for (i = 0; i < num_cols; i++) {
 		SQLSMALLINT          ValueType     = 0;
-		SQLSMALLINT          ParameterType;
+		SQLSMALLINT          ParameterType = 0;
 		SQLULEN              ColumnSize    = M_sql_driver_stmt_bind_get_max_col_size(stmt, i);
 		M_sql_data_type_t    type          = M_sql_driver_stmt_bind_get_col_type(stmt, i);
 		SQLPOINTER           ParameterValue;
@@ -890,7 +902,10 @@ static M_sql_error_t odbc_bind_params_array(M_sql_driver_stmt_t *dstmt, M_sql_st
 				break;
 		}
 
-		odbc_bind_set_type(dstmt, i, type, &ValueType, &ParameterType);
+		if (!odbc_bind_set_type(type, &ValueType, &ParameterType)) {
+			M_snprintf(error, error_size, "Failed to determine data type col %zu", i);
+			goto done;
+		}
 
 		for (row = 0; row < num_rows; row++) {
 			odbc_bind_set_value_array(stmt, row, i, (size_t)ColumnSize, &dstmt->bind_cols[i]);
@@ -927,6 +942,11 @@ static void odbc_bind_set_value_flat(M_sql_stmt_t *stmt, size_t row, size_t col,
 	M_sql_data_type_t type = M_sql_driver_stmt_bind_get_type(stmt, row, col);
 	const unsigned char *data;
 
+	if (M_sql_driver_stmt_bind_isnull(stmt, row, col)) {
+		*len   = SQL_NULL_DATA;
+		return;
+	}
+
 	switch (type) {
 		case M_SQL_DATA_TYPE_BOOL:
 			*value = M_sql_driver_stmt_bind_get_bool_addr(stmt, row, col);
@@ -957,8 +977,6 @@ static void odbc_bind_set_value_flat(M_sql_stmt_t *stmt, size_t row, size_t col,
 			break;
 
 		case M_SQL_DATA_TYPE_UNKNOWN: /* Silence warning, should never get this */
-		case M_SQL_DATA_TYPE_NULL:
-			*len   = SQL_NULL_DATA;
 			break;
 	}
 }
@@ -994,13 +1012,16 @@ static M_sql_error_t odbc_bind_params_flat(M_sql_driver_stmt_t *dstmt, M_sql_stm
 	for (row = 0; row < num_rows; row++) {
 		for (i = 0; i < num_cols; i++) {
 			SQLSMALLINT          ValueType      = 0;
-			SQLSMALLINT          ParameterType;
+			SQLSMALLINT          ParameterType  = 0;
 			SQLULEN              ColumnSize     = 0;
 			SQLPOINTER           ParameterValue = NULL;
 			M_sql_data_type_t    type           = M_sql_driver_stmt_bind_get_type(stmt, row, i);
 			size_t               idx            = (row * num_cols) + i;
 
-			odbc_bind_set_type(dstmt, i, type, &ValueType, &ParameterType);
+			if (!odbc_bind_set_type(type, &ValueType, &ParameterType)) {
+				M_snprintf(error, error_size, "Failed to determine data type for rows %zu col %zu", row, i);
+				goto done;
+			}
 			odbc_bind_set_value_flat(stmt, row, i, &ParameterValue, &dstmt->bind_flat_lens[idx]);
 
 			if (ParameterValue != NULL) {
@@ -1562,6 +1583,18 @@ static M_bool odbc_cb_append_bitop(M_sql_connpool_t *pool, M_buf_t *query, M_sql
 }
 
 
+static char *odbc_cb_rewrite_indexname(M_sql_connpool_t *pool, const char *index_name)
+{
+	M_sql_driver_connpool_t  *dpool      = M_sql_driver_pool_get_dpool(pool);
+	odbc_connpool_data_t     *data       = &dpool->primary;
+
+	if (!data->profile->cb_rewrite_indexname)
+		return NULL;
+
+	return data->profile->cb_rewrite_indexname(pool, index_name);
+}
+
+
 static M_sql_driver_t M_sql_odbc = {
 	M_SQL_DRIVER_VERSION,         /* Driver/Module subsystem version */
 	"odbc",                       /* Short name of module */
@@ -1588,7 +1621,7 @@ static M_sql_driver_t M_sql_odbc = {
 	odbc_cb_createtable_suffix,   /* Callback used to append additional data to the Create Table query string */
 	odbc_cb_append_updlock,       /* Callback used to append row-level locking data */
 	odbc_cb_append_bitop,         /* Callback used to append a bit operation */
-
+	odbc_cb_rewrite_indexname,    /* Callback used to rewrite an index name to comply with DB requirements */
 	NULL,                         /* Handle for loaded driver - must be initialized to NULL */
 };
 

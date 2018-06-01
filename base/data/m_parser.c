@@ -882,6 +882,43 @@ size_t M_parser_consume_until(M_parser_t *parser, const unsigned char *pat, size
 }
 
 
+size_t M_parser_consume_boundary(M_parser_t *parser, const unsigned char *pat, size_t len, M_bool eat_pat, M_bool *found)
+{
+	size_t consumed_len = 0;
+	M_bool myfound;
+	size_t i            = 0;
+	size_t j            = 0;
+
+	if (found == NULL)
+		found = &myfound;
+	*found = M_FALSE;
+
+	if (parser == NULL || pat == NULL || len == 0)
+		return 0;
+
+	do {
+		M_bool eq = (parser->data[i] == pat[j]);
+		i++;
+		if (eq) {
+			j++;
+			if (j >= len) {
+				*found = M_TRUE;
+			}
+		} else {
+			consumed_len = i;
+			j            = 0;
+		}
+	} while (i < parser->data_len && !(*found));
+
+	/* Skip past end of boundry if it was fully found. */
+	if (*found && eat_pat)
+		consumed_len += len;
+
+	M_parser_consume(parser, consumed_len);
+	return consumed_len;
+}
+
+
 size_t M_parser_consume_charset(M_parser_t *parser, const unsigned char *charset, size_t charset_len)
 {
 	return M_parser_consume_charset_int(parser, charset, charset_len, M_TRUE);
@@ -917,6 +954,10 @@ size_t M_parser_consume_str_until(M_parser_t *parser, const char *pat, M_bool ea
 	return M_parser_consume_until(parser, (const unsigned char *)pat, M_str_len(pat), eat_pat);
 }
 
+size_t M_parser_consume_str_boundary(M_parser_t *parser, const char *pat, M_bool eat_pat, M_bool *found)
+{
+	return M_parser_consume_boundary(parser, (const unsigned char *)pat, M_str_len(pat), eat_pat, found);
+}
 
 size_t M_parser_consume_not_charset(M_parser_t *parser, const unsigned char *charset, size_t charset_len)
 {
@@ -1097,6 +1138,29 @@ size_t M_parser_read_bytes_until(M_parser_t *parser, unsigned char *buf, size_t 
 }
 
 
+size_t M_parser_read_bytes_boundary(M_parser_t *parser, unsigned char *buf, size_t buf_len, const unsigned char *pat, size_t len, M_bool eat_pat, M_bool *found)
+{
+	size_t rlen;
+
+	if (parser == NULL || buf == NULL || buf_len == 0 || pat == NULL || len == 0)
+		return 0;
+
+	/* Mark internal */
+	M_parser_mark_int(parser, M_PARSER_MARKED_INT);
+
+	/* Consume the charset */
+	rlen = M_parser_consume_boundary(parser, pat, len, eat_pat, found);
+	if (rlen == 0) {
+		M_parser_mark_clear_int(parser, M_PARSER_MARKED_INT);
+		return 0;
+	}
+
+	/* Output the data from the marked position, this will also clear the mark */ 
+	return M_parser_read_bytes_mark_int(parser, M_PARSER_MARKED_INT, buf, buf_len);
+
+}
+
+
 size_t M_parser_read_bytes_charset(M_parser_t *parser, const unsigned char *charset, size_t charset_len, unsigned char *buf, size_t buf_len)
 {
 	if (parser == NULL || buf == NULL || buf_len == 0 || charset == NULL || charset_len == 0)
@@ -1194,6 +1258,21 @@ size_t M_parser_read_str_until(M_parser_t *parser, char *buf, size_t buf_len, co
 	return len;
 }
 
+
+size_t M_parser_read_str_boundary(M_parser_t *parser, char *buf, size_t buf_len, const char *pat, M_bool eat_pat, M_bool *found)
+{
+	size_t len;
+
+	if (parser == NULL || buf == NULL || buf_len == 0 || M_str_isempty(pat))
+		return 0;
+
+	len = M_parser_read_bytes_boundary(parser, (unsigned char *)buf, buf_len-1, (const unsigned char *)pat, M_str_len(pat), eat_pat, found);
+
+	/* NULL terminate */
+	if (buf_len)
+		buf[len] = 0;
+	return len;
+}
 
 size_t M_parser_read_str_charset(M_parser_t *parser, const char *charset, char *buf, size_t buf_len)
 {
@@ -1304,6 +1383,37 @@ char *M_parser_read_strdup_until(M_parser_t *parser, const char *pat, M_bool eat
 	out = M_malloc(len+1);
 	
 	/* Output the data from the marked position, this will also clear the mark */ 
+	if (M_parser_read_bytes_mark_int(parser, M_PARSER_MARKED_INT, (unsigned char *)out, len) != len) {
+		M_free(out);
+		return NULL;
+	}
+
+	out[len] = 0;
+	return out;
+}
+
+
+char *M_parser_read_strdup_boundary(M_parser_t *parser, const char *pat, M_bool eat_pat, M_bool *found)
+{
+	size_t len;
+	char  *out = NULL;
+
+	if (parser == NULL || pat == NULL || *pat == '\0')
+		return NULL;
+
+	/* Mark internal */
+	M_parser_mark_int(parser, M_PARSER_MARKED_INT);
+
+	/* Consume the charset */
+	len = M_parser_consume_str_boundary(parser, pat, eat_pat, found);
+	if (len == 0) {
+		M_parser_mark_clear_int(parser, M_PARSER_MARKED_INT);
+		return NULL;
+	}
+
+	out = M_malloc(len+1);
+
+	/* Output the data from the marked position, this will also clear the mark */
 	if (M_parser_read_bytes_mark_int(parser, M_PARSER_MARKED_INT, (unsigned char *)out, len) != len) {
 		M_free(out);
 		return NULL;
@@ -1431,6 +1541,27 @@ M_parser_t *M_parser_read_parser_until(M_parser_t *parser, const unsigned char *
 }
 
 
+M_parser_t *M_parser_read_parser_boundary(M_parser_t *parser, const unsigned char *pat, size_t len, M_bool eat_pat, M_bool *found)
+{
+	size_t rlen;
+
+	if (parser == NULL || pat == NULL || len == 0)
+		return NULL;
+
+	/* Mark internal */
+	M_parser_mark_int(parser, M_PARSER_MARKED_INT);
+
+	/* Consume the charset */
+	rlen = M_parser_consume_boundary(parser, pat, len, eat_pat, found);
+	if (rlen == 0) {
+		M_parser_mark_clear_int(parser, M_PARSER_MARKED_INT);
+		return NULL;
+	}
+
+	return M_parser_read_parser_mark_int(parser, M_PARSER_MARKED_INT);
+}
+
+
 M_parser_t *M_parser_read_parser_charset(M_parser_t *parser, unsigned const char *charset, size_t charset_len)
 {
 	size_t len;
@@ -1489,8 +1620,12 @@ M_parser_t *M_parser_read_parser_mark(M_parser_t *parser)
 
 M_parser_t **M_parser_split(M_parser_t *parser, unsigned char delim, size_t maxcnt, M_uint32 flags, size_t *num_output)
 {
-	size_t               i;
-	size_t               cnt;
+	return M_parser_split_pat(parser, &delim, 1, maxcnt, flags, num_output);
+}
+
+M_parser_t **M_parser_split_pat(M_parser_t *parser, const unsigned char *pat, size_t pat_len, size_t maxcnt, M_uint32 flags, size_t *num_output)
+{
+	size_t               cnt = 0;
 	M_parser_t         **parsers;
 	const unsigned char *ptr;
 	size_t               ptrlen;
@@ -1501,12 +1636,14 @@ M_parser_t **M_parser_split(M_parser_t *parser, unsigned char delim, size_t maxc
 
 	/* Count number of delimiters to get number of output sections */
 	cnt = 1;
-	for (i=0; i<parser->data_len; i++) {
-		if (parser->data[i] == delim)
-			cnt++;
-		if (maxcnt != 0 && cnt == maxcnt)
+	M_parser_mark_int(parser, M_PARSER_MARKED_INT);
+	while (M_parser_consume_until(parser, pat, pat_len, M_TRUE) != 0) {
+		cnt++;
+		if (maxcnt != 0 && cnt == maxcnt) {
 			break;
+		}
 	}
+	M_parser_mark_rewind_int(parser, M_PARSER_MARKED_INT);
 
 	if (cnt == 1 && flags & M_PARSER_SPLIT_FLAG_NODELIM_ERROR)
 		return NULL;
@@ -1529,7 +1666,7 @@ M_parser_t **M_parser_split(M_parser_t *parser, unsigned char delim, size_t maxc
 			M_parser_consume(parser, parser->data_len);
 		} else {
 			/* If we can't find the delimiter, just consume the rest of the input */
-			if (M_parser_consume_until(parser, &delim, 1, M_TRUE) == 0) {
+			if (M_parser_consume_until(parser, pat, pat_len, M_TRUE) == 0) {
 				M_parser_consume(parser, parser->data_len);
 			} else {
 				trim_delimiter = M_TRUE;
@@ -1537,10 +1674,10 @@ M_parser_t **M_parser_split(M_parser_t *parser, unsigned char delim, size_t maxc
 		}
 		ptr = M_parser_marked_buffer_start(parser, M_PARSER_MARKED_INT, &ptrlen);
 
-		/* M_parser_consume_until also consumes the specified character so trim
+		/* M_parser_consume_until also consumes the specified pat so trim
 		 * that if that is the function we called */
 		if (trim_delimiter && ptrlen)
-			ptrlen--;
+			ptrlen -= pat_len;
 
 		parsers[cnt] = M_parser_create(parser->flags);
 		M_parser_append(parsers[cnt], ptr, ptrlen);
@@ -1560,6 +1697,10 @@ M_parser_t **M_parser_split(M_parser_t *parser, unsigned char delim, size_t maxc
 	return parsers;
 }
 
+M_parser_t **M_parser_split_str_pat(M_parser_t *parser, const char *pat, size_t maxcnt, M_uint32 flags, size_t *num_output)
+{
+	return M_parser_split_pat(parser, (const unsigned char *)pat, M_str_len(pat), maxcnt, flags, num_output);
+}
 
 void M_parser_split_free(M_parser_t **parsers, size_t cnt)
 {
@@ -1573,7 +1714,7 @@ void M_parser_split_free(M_parser_t **parsers, size_t cnt)
 	M_free(parsers);
 }
 
-M_API M_PARSER_FRAME_ERROR M_parser_read_stxetxlrc_message(M_parser_t *parser, M_parser_t **out, M_uint32 lrc_frame_chars)
+M_PARSER_FRAME_ERROR M_parser_read_stxetxlrc_message(M_parser_t *parser, M_parser_t **out, M_uint32 lrc_frame_chars)
 {
 	unsigned char *data;
 	unsigned char  byte;
@@ -1700,6 +1841,27 @@ size_t M_parser_read_buf_until(M_parser_t *parser, M_buf_t *buf, const unsigned 
 
 	/* Consume the charset */
 	rlen = M_parser_consume_until(parser, pat, pat_len, eat_pat);
+	if (rlen == 0) {
+		M_parser_mark_clear_int(parser, M_PARSER_MARKED_INT);
+		return 0;
+	}
+
+	/* Output the data from the marked position, this will also clear the mark */ 
+	return M_parser_read_buf_mark_int(parser, M_PARSER_MARKED_INT, buf);
+}
+
+size_t M_parser_read_buf_boundary(M_parser_t *parser, M_buf_t *buf, const unsigned char *pat, size_t len, M_bool eat_pat, M_bool *found)
+{
+	size_t rlen;
+
+	if (parser == NULL || buf == NULL || pat == NULL || len == 0)
+		return 0;
+
+	/* Mark internal */
+	M_parser_mark_int(parser, M_PARSER_MARKED_INT);
+
+	/* Consume the charset */
+	rlen = M_parser_consume_boundary(parser, pat, len, eat_pat, found);
 	if (rlen == 0) {
 		M_parser_mark_clear_int(parser, M_PARSER_MARKED_INT);
 		return 0;

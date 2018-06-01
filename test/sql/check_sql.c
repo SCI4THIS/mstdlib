@@ -26,8 +26,6 @@ static const char *coltype2str(M_sql_data_type_t type)
 			return "TEXT";
 		case M_SQL_DATA_TYPE_BINARY:
 			return "BINARY";
-		case M_SQL_DATA_TYPE_NULL:
-			return "NULL";
 	}
 	return "WTF";
 }
@@ -73,6 +71,12 @@ static const char *sql_trace_type(M_sql_trace_t event_type)
 			return "DRIVER_DEBUG";
 		case M_SQL_TRACE_DRIVER_ERROR:
 			return "DRIVER_ERROR";
+		case M_SQL_TRACE_STALL_QUERY:
+			return "STALL_QUERY";
+		case M_SQL_TRACE_STALL_TRANS_IDLE:
+			return "STALL_TRANS_IDLE";
+		case M_SQL_TRACE_STALL_TRANS_LONG:
+			return "STALL_TRANS_LONG";
 	}
 	return NULL;
 }
@@ -128,6 +132,9 @@ static void sql_trace(M_sql_trace_t event_type, const M_sql_trace_data_t *data, 
 		case M_SQL_TRACE_EXECUTE_FINISH:
 		case M_SQL_TRACE_TRANFAIL:
 		case M_SQL_TRACE_FETCH_FINISH:
+		case M_SQL_TRACE_STALL_QUERY:
+		case M_SQL_TRACE_STALL_TRANS_IDLE:
+		case M_SQL_TRACE_STALL_TRANS_LONG:
 			M_buf_add_str(buf, " (");
 			M_buf_add_uint(buf, M_sql_trace_get_duration_ms(data));
 			M_buf_add_str(buf, "ms)");
@@ -139,6 +146,7 @@ static void sql_trace(M_sql_trace_t event_type, const M_sql_trace_data_t *data, 
 	switch (event_type) {
 		case M_SQL_TRACE_FETCH_FINISH:
 		case M_SQL_TRACE_DISCONNECTED:
+		case M_SQL_TRACE_STALL_TRANS_IDLE:
 			M_buf_add_str(buf, " (overall ");
 			M_buf_add_uint(buf, M_sql_trace_get_total_duration_ms(data));
 			M_buf_add_str(buf, "ms)");
@@ -153,9 +161,13 @@ static void sql_trace(M_sql_trace_t event_type, const M_sql_trace_data_t *data, 
 		case M_SQL_TRACE_FETCH_START:
 		case M_SQL_TRACE_FETCH_FINISH:
 		case M_SQL_TRACE_TRANFAIL:
-			M_buf_add_str(buf, " UserQuery='");
-			M_buf_add_str(buf, M_sql_trace_get_query_user(data));
-			M_buf_add_str(buf, "'");
+		case M_SQL_TRACE_STALL_QUERY:
+		case M_SQL_TRACE_STALL_TRANS_LONG:
+			if (M_sql_trace_get_query_user(data) != NULL) {
+				M_buf_add_str(buf, " UserQuery='");
+				M_buf_add_str(buf, M_sql_trace_get_query_user(data));
+				M_buf_add_str(buf, "'");
+			}
 			break;
 		default:
 			break;
@@ -166,9 +178,13 @@ static void sql_trace(M_sql_trace_t event_type, const M_sql_trace_data_t *data, 
 		case M_SQL_TRACE_FETCH_START:
 		case M_SQL_TRACE_FETCH_FINISH:
 		case M_SQL_TRACE_TRANFAIL:
-			M_buf_add_str(buf, " PreparedQuery='");
-			M_buf_add_str(buf, M_sql_trace_get_query_prepared(data));
-			M_buf_add_str(buf, "'");
+		case M_SQL_TRACE_STALL_QUERY:
+		case M_SQL_TRACE_STALL_TRANS_LONG:
+			if (M_sql_trace_get_query_prepared(data) != NULL) {
+				M_buf_add_str(buf, " PreparedQuery='");
+				M_buf_add_str(buf, M_sql_trace_get_query_prepared(data));
+				M_buf_add_str(buf, "'");
+			}
 			break;
 		default:
 			break;
@@ -180,10 +196,14 @@ static void sql_trace(M_sql_trace_t event_type, const M_sql_trace_data_t *data, 
 		case M_SQL_TRACE_FETCH_START:
 		case M_SQL_TRACE_FETCH_FINISH:
 		case M_SQL_TRACE_TRANFAIL:
-			M_buf_add_str(buf, " bind_rows=");
-			M_buf_add_uint(buf, M_sql_trace_get_bind_rows(data));
-			M_buf_add_str(buf, " bind_cols=");
-			M_buf_add_uint(buf, M_sql_trace_get_bind_cols(data));
+		case M_SQL_TRACE_STALL_QUERY:
+		case M_SQL_TRACE_STALL_TRANS_LONG:
+			if (M_sql_trace_get_bind_rows(data) > 0) {
+				M_buf_add_str(buf, " bind_rows=");
+				M_buf_add_uint(buf, M_sql_trace_get_bind_rows(data));
+				M_buf_add_str(buf, " bind_cols=");
+				M_buf_add_uint(buf, M_sql_trace_get_bind_cols(data));
+			}
 			break;
 		default:
 			break;
@@ -231,7 +251,7 @@ static M_sql_error_t check_sql_trans(M_sql_trans_t *trans, void *arg, char *erro
 	M_sql_stmt_bind_int16(stmt, (M_int32)0);            /* Insert int16 into int32 */
 	M_sql_stmt_bind_int16(stmt, (M_int16)(0 % 2));      /* Bind int16 to bool */
 	M_sql_stmt_bind_binary_const(stmt, (const M_uint8 *)"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F", 16);
-	M_sql_stmt_bind_null(stmt);
+	M_sql_stmt_bind_binary_const(stmt, NULL, 0);
 	err  = M_sql_trans_execute(trans, stmt);
 	if (err != M_SQL_ERROR_SUCCESS) {
 		M_snprintf(error, error_size, "M_sql_stmt_execute(INSERT) failed: %s", M_sql_stmt_get_error_string(stmt));
@@ -250,7 +270,7 @@ static M_sql_error_t check_sql_trans(M_sql_trans_t *trans, void *arg, char *erro
 	M_sql_stmt_bind_bool(stmt, (M_bool)(1 % 2));   /* Bind bool to int32 */
 	M_sql_stmt_bind_int32(stmt, (M_int32)(1 % 2)); /* Bind int32 to bool */
 	M_sql_stmt_bind_binary_const(stmt, (const M_uint8 *)"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F", 16);
-	M_sql_stmt_bind_null(stmt);
+	M_sql_stmt_bind_binary_const(stmt, NULL, 0);
 	err  = M_sql_trans_execute(trans, stmt);
 	if (err != M_SQL_ERROR_SUCCESS) {
 		M_snprintf(error, error_size, "M_sql_stmt_execute(INSERT) failed: %s", M_sql_stmt_get_error_string(stmt));
@@ -270,8 +290,8 @@ static M_sql_error_t check_sql_trans(M_sql_trans_t *trans, void *arg, char *erro
 		M_sql_stmt_bind_int16(stmt, (M_int16)(i & 0xFFFF));
 		M_sql_stmt_bind_int32(stmt, (M_int32)i);
 		M_sql_stmt_bind_bool(stmt, (M_bool)i % 2);
-		M_sql_stmt_bind_null(stmt);
-		M_sql_stmt_bind_null(stmt);
+		M_sql_stmt_bind_binary_const(stmt, NULL, 0);
+		M_sql_stmt_bind_binary_const(stmt, NULL, 0);
 		M_sql_stmt_bind_new_row(stmt);
 	}
 	err  = M_sql_trans_execute(trans, stmt);
@@ -401,7 +421,7 @@ START_TEST(check_sql)
 		M_sql_stmt_bind_int32(stmt, (M_int32)((3+INSERT_ROWS+i) & 0xFFFFFFFF));
 		M_sql_stmt_bind_bool(stmt, (M_bool)(3+INSERT_ROWS+i) % 2);
 		M_sql_stmt_bind_binary_const(stmt, (const unsigned char *)"0", 2);
-		M_sql_stmt_bind_null(stmt);
+		M_sql_stmt_bind_binary_const(stmt, NULL, 0);
 		M_sql_stmt_bind_new_row(stmt);
 	}
 	err  = M_sql_stmt_execute(pool, stmt);
@@ -422,7 +442,7 @@ START_TEST(check_sql)
 	M_sql_stmt_bind_int16(stmt, (M_int16)((5+INSERT_ROWS) & 0xFFFF));
 	M_sql_stmt_bind_int32(stmt, (M_int32)((5+INSERT_ROWS) & 0xFFFFFFFF));
 	M_sql_stmt_bind_bool(stmt, (M_bool)(5+INSERT_ROWS) % 2);
-	M_sql_stmt_bind_null(stmt);
+	M_sql_stmt_bind_binary_const(stmt, NULL, 0);
 	M_sql_stmt_bind_binary_own(stmt, hugedata, HUGEDATA_SIZE);
 	err  = M_sql_stmt_execute(pool, stmt);
 	ck_assert_msg(err == M_SQL_ERROR_SUCCESS, "M_sql_stmt_execute(INSERT hugedata) failed: %s: %s", M_sql_error_string(err), M_sql_stmt_get_error_string(stmt));
@@ -432,12 +452,12 @@ START_TEST(check_sql)
 	stmt = M_sql_stmt_groupinsert_prepare(pool, insert_query);
 	ck_assert_msg(stmt != NULL, "M_sql_stmt_groupinsert_prepare() failed");
 	M_sql_stmt_bind_int32(stmt, (M_int32)((6+INSERT_ROWS) & 0xFFFFFFFF));
-	M_sql_stmt_bind_null(stmt); /* name */
+	M_sql_stmt_bind_text_const(stmt, NULL, 0); /* name */
 	M_sql_stmt_bind_int16(stmt, (M_int16)((6+INSERT_ROWS) & 0xFFFF));
-	M_sql_stmt_bind_null(stmt); /* i32col */
+	M_sql_stmt_bind_int32_null(stmt); /* i32col */
 	M_sql_stmt_bind_bool(stmt, (M_bool)(6+INSERT_ROWS) % 2);
-	M_sql_stmt_bind_null(stmt);
-	M_sql_stmt_bind_null(stmt);
+	M_sql_stmt_bind_binary_const(stmt, NULL, 0);
+	M_sql_stmt_bind_binary_const(stmt, NULL, 0);
 	err  = M_sql_stmt_execute(pool, stmt);
 	ck_assert_msg(err == M_SQL_ERROR_SUCCESS, "M_sql_stmt_execute(groupinsert) failed: %s: %s", M_sql_error_string(err), M_sql_stmt_get_error_string(stmt));
 	M_sql_stmt_destroy(stmt);

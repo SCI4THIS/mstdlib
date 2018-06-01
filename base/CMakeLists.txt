@@ -35,6 +35,7 @@ set(sources
 	data/m_str_hexdump.c
 	data/m_str_num.c
 	data/m_str_patmatch.c
+	data/m_utf8.c
 
 	# fs:
 	fs/m_fs.c
@@ -92,6 +93,41 @@ set(sources
 	sort/m_sort_mergesort.c
 	sort/m_sort_qsort.c
 
+	# textcodec
+	textcodec/m_textcodec.c
+	textcodec/m_textcodec_buffer.c
+	textcodec/m_textcodec_ascii.c
+	textcodec/m_textcodec_cp037.c
+	textcodec/m_textcodec_cp500.c
+	textcodec/m_textcodec_cp874.c
+	textcodec/m_textcodec_cp1250.c
+	textcodec/m_textcodec_cp1251.c
+	textcodec/m_textcodec_cp1252.c
+	textcodec/m_textcodec_cp1253.c
+	textcodec/m_textcodec_cp1254.c
+	textcodec/m_textcodec_cp1255.c
+	textcodec/m_textcodec_cp1256.c
+	textcodec/m_textcodec_cp1257.c
+	textcodec/m_textcodec_cp1258.c
+	textcodec/m_textcodec_cp_map.c
+	textcodec/m_textcodec_iso8859_1.c
+	textcodec/m_textcodec_iso8859_2.c
+	textcodec/m_textcodec_iso8859_3.c
+	textcodec/m_textcodec_iso8859_4.c
+	textcodec/m_textcodec_iso8859_5.c
+	textcodec/m_textcodec_iso8859_6.c
+	textcodec/m_textcodec_iso8859_7.c
+	textcodec/m_textcodec_iso8859_8.c
+	textcodec/m_textcodec_iso8859_9.c
+	textcodec/m_textcodec_iso8859_10.c
+	textcodec/m_textcodec_iso8859_11.c
+	textcodec/m_textcodec_iso8859_13.c
+	textcodec/m_textcodec_iso8859_14.c
+	textcodec/m_textcodec_iso8859_15.c
+	textcodec/m_textcodec_iso8859_16.c
+	textcodec/m_textcodec_percent.c
+	textcodec/m_textcodec_punycode.c
+
 	# time:
 	time/m_time.c
 	time/m_time_elapsed.c
@@ -127,6 +163,13 @@ else ()
 		fs/m_fs_perms_unx.c
 		# platform:
 		platform/m_platform_unx.c
+	)
+endif ()
+
+if (APPLE)
+	list(APPEND sources
+		# fs:
+		fs/m_fs_mac.m
 	)
 endif ()
 
@@ -176,6 +219,13 @@ endif ()
 if (WIN32 OR MINGW)
 	target_link_libraries(${PROJECT_NAME}
 		PRIVATE winmm.lib Advapi32.lib Authz.lib Shlwapi.lib Shell32.lib
+	)
+endif ()
+
+if (CMAKE_SYSTEM_NAME MATCHES "Darwin")
+	find_library(FOUNDATION NAMES Foundation)
+	target_link_libraries(${PROJECT_NAME}
+		PUBLIC "${FOUNDATION}"
 	)
 endif ()
 
