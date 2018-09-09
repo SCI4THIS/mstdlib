@@ -49,7 +49,7 @@ static void M_event_io_unregister(M_io_t *comm, M_bool in_destructor)
 	if (!in_destructor) {
 		/* Kill any soft events. But not if in a destructor as this might
 		 * cause a bad recursive operation */
-		M_io_softevent_clearall(comm);
+		M_io_softevent_clearall(comm, M_FALSE);
 	}
 
 	comm->reg_event = NULL;
@@ -362,7 +362,7 @@ void M_io_layer_softevent_clear(M_io_layer_t *layer)
 }
 
 
-void M_io_softevent_clearall(M_io_t *io)
+void M_io_softevent_clearall(M_io_t *io, M_bool nonerror_only)
 {
 	M_event_t            *event = M_io_get_event(io);
 	M_event_io_t         *ioev  = NULL;
@@ -374,11 +374,30 @@ void M_io_softevent_clearall(M_io_t *io)
 
 	if (M_hashtable_get(event->u.loop.reg_ios, io, (void **)&ioev)) {
 		if (ioev->softevent_node != NULL) {
-			M_llist_remove_node(ioev->softevent_node);
-			ioev->softevent_node = NULL;
+			M_event_softevent_t  *softevent = M_llist_node_val(ioev->softevent_node);
+			size_t                num       = M_io_layer_count(io);
+			size_t                layer_id;
+
+			if (softevent) {
+				for (layer_id=0; layer_id <= num /* <= as num is user layer */; layer_id++) {
+					if (nonerror_only) {
+						softevent->events[layer_id]    &= (M_uint16)((~(1 << M_EVENT_TYPE_CONNECTED)) & 0xFFFF);
+						softevent->events[layer_id]    &= (M_uint16)((~(1 << M_EVENT_TYPE_ACCEPT))    & 0xFFFF);
+						softevent->events[layer_id]    &= (M_uint16)((~(1 << M_EVENT_TYPE_READ))      & 0xFFFF);
+						softevent->events[layer_id]    &= (M_uint16)((~(1 << M_EVENT_TYPE_WRITE))     & 0xFFFF);
+						softevent->events[layer_id]    &= (M_uint16)((~(1 << M_EVENT_TYPE_OTHER))     & 0xFFFF);
+					} else {
+						softevent->events[layer_id]     = 0;
+					}
+				}
+				if (M_io_layer_softevent_is_empty(io, softevent)) {
+					M_llist_remove_node(ioev->softevent_node);
+					ioev->softevent_node = NULL;
+				}
+			}
 		}
 	}
-	
+
 	M_event_unlock(event);
 }
 
@@ -658,6 +677,39 @@ done:
 }
 
 
+M_event_callback_t M_event_get_io_cb(M_io_t *io, void **cb_data_out)
+{
+	M_event_t         *event = NULL;
+	M_event_io_t      *ioev  = NULL;
+	M_event_callback_t cb    = NULL;
+
+	(*cb_data_out) = NULL;
+
+	if (io == NULL)
+		return NULL;
+
+	M_io_lock(io);
+
+	event = io->reg_event;
+	if (event == NULL)
+		goto done;
+
+	M_event_lock(event);
+
+	if (!M_hashtable_get(event->u.loop.reg_ios, io, (void **)&ioev) || ioev == NULL)
+		goto done;
+
+	cb             = ioev->callback;
+	(*cb_data_out) = ioev->cb_data;
+
+done:
+	M_event_unlock(event);
+	M_io_unlock(io);
+
+	return cb;
+}
+
+
 void M_event_remove(M_io_t *io)
 {
 	M_event_t *event;
@@ -829,6 +881,7 @@ static void M_event_deliver(M_event_t *event, M_io_t *io, size_t layer_id, M_eve
 
 	/* Re-obtain locks */
 	M_event_lock(event);
+
 }
 
 

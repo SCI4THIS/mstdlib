@@ -253,6 +253,14 @@ M_API M_fs_error_t M_json_write_file(const M_json_node_t *node, const char *path
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+/*! Convert a JSON error code to a string.
+ *
+ * \param[in] err error code
+ * \return        name of error code (not a description, just the enum name, like M_JSON_ERROR_SUCCESS)
+ */
+M_API const char *M_json_errcode_to_str(M_json_error_t err);
+
+
 /*! Get the type of node.
  *
  * \param[in] node The node.
@@ -378,11 +386,22 @@ M_API M_bool M_json_object_value_bool(const M_json_node_t *node, const char *key
 
 /*! Get a list of all keys for the object.
  *
- * \param[in]  node The node.
+ * \param[in] node The node.
  *
  * \return A list of keys.
  */
 M_API M_list_str_t *M_json_object_keys(const M_json_node_t *node);
+
+
+/*! Get the number of child nodes in this object.
+ *
+ * This corresponds to the number of gets.
+ *
+ * \param[in] node The node.
+ *
+ * \return Count of objects.
+ */
+M_API size_t M_json_object_num_children(const M_json_node_t *node);
 
 
 /*! Insert a node into the object.

@@ -113,7 +113,7 @@ M_API M_bool M_io_callbacks_reg_read(M_io_callbacks_t *callbacks, M_io_error_t (
 /*! Register callback to write to the connection. Optional if not base layer, required if base layer */
 M_API M_bool M_io_callbacks_reg_write(M_io_callbacks_t *callbacks, M_io_error_t (*cb_write)(M_io_layer_t *layer, const unsigned char *buf, size_t *write_len, M_io_meta_t *meta));
 
-/*! Register callback to process events.  Optional. */
+/*! Register callback to process events.  Optional. If returns M_TRUE event is consumed and not propagated to the next layer. */
 M_API M_bool M_io_callbacks_reg_processevent(M_io_callbacks_t *callbacks, M_bool (*cb_process_event)(M_io_layer_t *layer, M_event_type_t *type));
 
 /*! Register callback that is called when io object is removed from event object. Mandatory */
@@ -121,6 +121,12 @@ M_API M_bool M_io_callbacks_reg_unregister(M_io_callbacks_t *callbacks, void (*c
 
 /*! Register callback to start a graceful disconnect sequence.  Optional. */
 M_API M_bool M_io_callbacks_reg_disconnect(M_io_callbacks_t *callbacks, M_bool (*cb_disconnect)(M_io_layer_t *layer));
+
+/*! Register callback to reset any state (M_io_handle_t *). Optional.
+ *
+ * Will reset the state of the layer for re-connection.
+ */
+M_API M_bool M_io_callbacks_reg_reset(M_io_callbacks_t *callbacks, M_bool (*cb_reset)(M_io_layer_t *layer));
 
 /*! Register callback to destroy any state (M_io_handle_t *). Mandatory.
  *

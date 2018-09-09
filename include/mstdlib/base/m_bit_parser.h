@@ -70,6 +70,20 @@ __BEGIN_DECLS
 struct M_bit_parser;
 typedef struct M_bit_parser M_bit_parser_t;
 
+
+/*! Signed integer formats understood by bit parser.
+ *
+ * In-depth description of these formats can be found at <https://en.wikipedia.org/wiki/Signed_number_representations>.
+ * 
+ * \see M_bit_parser_read_int
+ */
+typedef enum {
+	M_BIT_PARSER_SIGN_MAG  = 0, /*!< Signed magnitude format (first bit is sign, rest of bits are magnitude) */
+	M_BIT_PARSER_ONES_COMP = 1, /*!< One's complement */
+	M_BIT_PARSER_TWOS_COMP = 2  /*!< Two's complement */
+} M_bit_parser_int_format_t;
+
+
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 /*! Create a bit parser over the given data (copies input data).
@@ -105,6 +119,18 @@ M_API M_bit_parser_t *M_bit_parser_create(const void *bytes, size_t nbits) M_WAR
  * \see M_bit_parser_destroy
  */
 M_API M_bit_parser_t *M_bit_parser_create_const(const void *bytes, size_t nbits) M_WARN_UNUSED_RESULT M_MALLOC;
+
+
+/*! Append data to a bit parser object.
+ *
+ * If you append data to a parser that was created with M_bit_parser_create_const(), the const data will
+ * be copied into internal storage before the append.
+ *
+ * \param[in] bparser bit parser object
+ * \param[in] bytes   bytes to read from
+ * \param[in] nbits   number of bits to append from byte array
+ */
+M_API void M_bit_parser_append(M_bit_parser_t *bparser, const void *bytes, size_t nbits);
 
 
 /*! Reset parser to use new data (copies input data).
@@ -231,6 +257,41 @@ M_API M_bool M_bit_parser_read_bit(M_bit_parser_t *bparser, M_uint8 *bit);
 M_API M_bool M_bit_parser_read_bit_buf(M_bit_parser_t *bparser, M_bit_buf_t *bbuf, size_t nbits);
 
 
+/*! Read multiple bits, zero-pad to byte boundary, then add them to the given buffer.
+ *
+ * Padding is only added as-needed to the last byte that gets added to the buffer. Every byte
+ * before that is packed with the bits we're reading.
+ *
+ * For example, if we add the bits "1010 1010 1100 01" using this function, two bytes are added to
+ * the buffer: "1010 1010 1100 0100" (two padding zeros on end).
+ *
+ *
+ * \param[in]     bparser bit parser to read bits from
+ * \param[in,out] buf     buffer to store bytes in
+ * \param[in]     nbits   number of bits to read
+ * \return                M_TRUE on success, M_FALSE if there aren't enough bits left
+ */
+M_API M_bool M_bit_parser_read_buf(M_bit_parser_t *bparser, M_buf_t *buf, size_t nbits);
+
+
+/*! Read multiple bits, zero-pad to byte boundary, then add them to the given array.
+ *
+ * Padding is only added as-needed to the last byte that gets added to the buffer. Every byte
+ * before that is packed with the bits we're reading.
+ *
+ * For example, if we add the bits "1010 1010 1100 01" using this function, two bytes are added to
+ * the buffer: "1010 1010 1100 0100" (two padding zeros on end).
+ *
+ *
+ * \param[in]     bparser bit parser to read bits from
+ * \param[in]     dest    array to store bytes in
+ * \param[in,out] destlen length of \a dest in bytes. Before return, set to number of bytes written.
+ * \param[in]     nbits   number of bits to read
+ * \return                M_TRUE on success, M_FALSE if there aren't enough bits left
+ */
+M_API M_bool M_bit_parser_read_bytes(M_bit_parser_t *bparser, M_uint8 *dest, size_t *destlen, size_t nbits);
+
+
 /*! Read multiple bits, then return them as a bit string.
  *
  * A bit string is just a list of '0' and '1' characters (e.g., "100101").
@@ -246,14 +307,15 @@ M_API M_bool M_bit_parser_read_bit_buf(M_bit_parser_t *bparser, M_bit_buf_t *bbu
 M_API char *M_bit_parser_read_strdup(M_bit_parser_t *bparser, size_t nbits);
 
 
-/*! Read multiple bits, convert directly to an unsigned integer.
+/*! Read multiple bits, intepret as big-endian unsigned integer.
  *
- * The bits are converted to a single big-endian unsigned integer.
+ * The bits are interpreted as a single big-endian unsigned integer, then the integer
+ * value is stored in \a res.
  *
- * For example, if a bit parser contains '11100', you should see the following:
- * \li M_bit_parser_read_uint(bparser, 3, &num) --> num == 7
- * \li M_bit_parser_read_uint(bparser, 4, &num) --> num == 14
- * \li M_bit_parser_read_uint(bparser, 5, &num) --> num == 28
+ * For example, if a bit parser contains '11100', you would see the following in num:
+ * \li M_bit_parser_read_uint(bparser, 3, &num) --> num == 7 (b111)
+ * \li M_bit_parser_read_uint(bparser, 4, &num) --> num == 14 (b1110)
+ * \li M_bit_parser_read_uint(bparser, 5, &num) --> num == 28 (b11100)
  *
  * \param[in]  bparser bit parser to read bits from
  * \param[in]  nbits   number of bits to read (must be >= 1 and <= 64)
@@ -261,6 +323,20 @@ M_API char *M_bit_parser_read_strdup(M_bit_parser_t *bparser, size_t nbits);
  * \return             M_TRUE on success, M_FALSE on failure
  */
 M_API M_bool M_bit_parser_read_uint(M_bit_parser_t *bparser, size_t nbits, M_uint64 *res);
+
+
+/*! Read multiple bits, interpret as a signed integer.
+ *
+ * The bits are interpreted as a single big-endian signed integer, using the specified
+ * signed integer format.
+ *
+ * \param[in]  bparser bit parser to read bits from
+ * \param[in]  nbits   number of bits to read (must be >= 2 and <= 64)
+ * \param[in]  fmt     signed integer format of the bits we're reading
+ * \param[out] res     read bits, converted to a native signed integer
+ * \return             M_TRUE on success, M_FALSE on failure
+ */
+M_API M_bool M_bit_parser_read_int(M_bit_parser_t *bparser, size_t nbits, M_bit_parser_int_format_t fmt, M_int64 *res);
 
 
 /*! Skip bits until we hit a bit different than the current one.

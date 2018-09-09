@@ -46,38 +46,57 @@
 #define M_CAST_OFF_CONST(type, var) ((type)((M_uintptr)var))
 #endif
 
+
+/* ===============================
+ * DB2 Mappings
+ */
 #ifndef SQL_IS_INTEGER
 #  define SQL_IS_INTEGER 0
 #endif
-
-/* DB2 Mappings */
+#ifndef SQL_IS_UINTEGER
+#  define SQL_IS_UINTEGER 0
+#endif
+#ifndef SQL_IS_POINTER
+#  define SQL_IS_POINTER 0
+#endif
 #if !defined(SQL_C_SSHORT) && defined(SQL_C_SHORT)
 #  define SQL_C_SSHORT SQL_C_SHORT
 #endif
 #if !defined(SQL_C_SBIGINT) && defined(SQL_C_BIGINT)
 #  define SQL_C_SBIGINT SQL_C_BIGINT
 #endif
+/* =============================== */
 
 typedef struct {
 	SQLLEN            *lens;
 	union {
-		M_int8     *i8vals;
-		M_int16    *i16vals;
-		M_int32    *i32vals;
-		M_int64    *i64vals;
-		M_uint8    *pvalues;
+		M_int8             *i8vals;
+		M_int16            *i16vals;
+		M_int32            *i32vals;
+		M_int64            *i64vals;
+		SQL_NUMERIC_STRUCT *i64num;
+		M_uint8            *pvalues;
 	} data;
 } odbc_bind_cols_t;
 
+typedef enum {
+	ODBC_CLEAR_NONE   = 0,
+	ODBC_CLEAR_CURSOR = 1 << 0,
+	ODBC_CLEAR_PARAMS = 1 << 1
+} odbc_clear_type_t;
 
 struct M_sql_driver_stmt {
-	SQLHSTMT              stmt;             /*!< ODBC Statement handle */
-	M_sql_driver_conn_t  *dconn;            /*!< Pointer back to parent connection handle */
+	SQLHSTMT              stmt;                  /*!< ODBC Statement handle */
+	odbc_clear_type_t     needs_clear;           /*!< if ODBC Statement Handle needs to be cleared before reuse */
+	M_sql_driver_conn_t  *dconn;                 /*!< Pointer back to parent connection handle */
 
-	odbc_bind_cols_t     *bind_cols;        /*!< Array binding columns/rows         */
-	size_t                bind_cols_cnt;    /*!< Count of columns                   */
-	SQLUSMALLINT         *bind_cols_status; /*!< Array of status's, one per row     */
-	SQLLEN               *bind_flat_lens;   /*!< Array of lens for flat or comma-delimited style binding */
+	odbc_bind_cols_t     *bind_cols;             /*!< Array binding columns/rows         */
+	size_t                bind_cols_cnt;         /*!< Count of columns                   */
+	SQLUSMALLINT         *bind_cols_status;      /*!< Array of status's, one per row     */
+	SQLULEN               bind_params_processed; /*!< Output of how many param sets (rows) were processed */
+	SQLLEN               *bind_flat_lens;        /*!< Array of lens for flat or comma-delimited style binding */
+
+	M_llist_t            *temp_vars;             /*!< Temporary variables to be free'd at end of execution */
 };
 
 
@@ -88,7 +107,9 @@ typedef void (*M_sql_driver_cb_createtable_suffix_odbc_t)(M_sql_connpool_t *pool
 typedef struct {
 	const char                               *name;                  /*!< SQL Server Name, used for matching (uses substring matching) */
 	M_bool                                    is_multival_insert_cd; /*!< Uses comma-delimited multi-value insertion */
+	M_bool                                    supports_c_sbigint;    /*!< Whether or not the database supports the SQL_C_SBIGINT datatype or not.  Will use SQL_C_NUMERIC if not. */
 	size_t                                    max_insert_records;    /*!< Maximum number of records that can be inserted at once. 0=unlimited */
+	size_t                                    max_bind_params;       /*!< Maximum number of bind params in a query. 0=unlimited */
 	size_t                                    unknown_size_ind;      /*!< Some DBs (PostgreSQL) use a length value to indicate a max or unknown size for results like 255 */
 
 	M_sql_driver_cb_resolve_error_t           cb_resolve_error;      /*!< Required. Dereference server-specific error code */
@@ -128,9 +149,29 @@ static SQLHENV odbc_env_handle         = SQL_NULL_HENV;
 
 static const odbc_server_profile_t odbc_server_profiles[] = {
 	{ 
+		/* As of SQL 2008, Microsoft can use the comma-delimited format.
+		 * we've seen crashes when using array binding within Microsoft's
+		 * driver so we should avoid it.  Apparently other people see the
+		 * same crash as we see:
+		 * https://www.easysoft.com/support/kb/kb00808.html (Issue #2)
+		 */
 		"Microsoft SQL Server",       /* name                  */
-		M_FALSE,                      /* is_multival_insert_cd */
-		0,                            /* max_insert_records    */
+		M_TRUE,                       /* is_multival_insert_cd */
+		M_TRUE,                       /* SQL_C_SBIGINT         */
+		/* Docs used to mention a limit of 1000 rows but that reference has been
+		 * removed, but here is discussion:
+		 * https://social.msdn.microsoft.com/Forums/sqlserver/en-US/bff53b3d-bf50-413f-891e-75af427394e2/limit-to-number-of-insert-statements-or-values-clauses?forum=transactsql
+		 */
+		1000,                         /* max_insert_records    */
+		/* Docs say 2100 limit, but others report 2099 is the real limit, but others
+		 * still says 2098 is the limit. We have confirmed via a customer report that
+		 * an insert of 150 rows with 14 params each (exactly 2100) fails.
+		 * Here's reference to 2099:
+		 *   https://stackoverflow.com/questions/845931/maximum-number-of-parameters-in-sql-query#comment47628989_845972
+		 * Here's reference to 2098:
+		 *   https://www.drupal.org/project/sqlsrv/issues/1686872#comment-6902266
+		 */
+		2098,                         /* max_bind_params       */
 		0,                            /* unknown_size_ind      */
 		mssql_resolve_error,          /* cb_resolve_error      */
 		mssql_cb_connect_runonce,     /* cb_connect_runonce    */
@@ -144,7 +185,9 @@ static const odbc_server_profile_t odbc_server_profiles[] = {
 	{ 
 		"DB2",                        /* name                  */
 		M_FALSE,                      /* is_multival_insert_cd */
+		M_TRUE,                       /* SQL_C_SBIGINT         */
 		0,                            /* max_insert_records    */
+		0,                            /* max_bind_params       */
 		0,                            /* unknown_size_ind      */
 		db2_resolve_error,            /* cb_resolve_error      */
 		NULL,                         /* cb_connect_runonce    */
@@ -158,7 +201,9 @@ static const odbc_server_profile_t odbc_server_profiles[] = {
 	{ 
 		"ORACLE",                     /* name                  */
 		M_FALSE,                      /* is_multival_insert_cd */
+		M_FALSE,                      /* SQL_C_SBIGINT         */
 		0,                            /* max_insert_records    */
+		0,                            /* max_bind_params       */
 		0,                            /* unknown_size_ind      */
 		oracle_resolve_error,         /* cb_resolve_error      */
 		oracle_cb_connect_runonce,    /* cb_connect_runonce    */
@@ -172,7 +217,9 @@ static const odbc_server_profile_t odbc_server_profiles[] = {
 	{ 
 		"MYSQL",                      /* name                  */
 		M_TRUE,                       /* is_multival_insert_cd */
-		100,                          /* max_insert_records    */
+		M_TRUE,                       /* SQL_C_SBIGINT         */
+		0,                            /* max_insert_records    */
+		M_UINT16_MAX,                 /* max_bind_params       */
 		0,                            /* unknown_size_ind      */
 		mysql_resolve_error,          /* cb_resolve_error      */
 		mysql_cb_connect_runonce,     /* cb_connect_runonce    */
@@ -186,7 +233,9 @@ static const odbc_server_profile_t odbc_server_profiles[] = {
 	{ 
 		"MariaDB",                    /* name                  */
 		M_TRUE,                       /* is_multival_insert_cd */
-		100,                          /* max_insert_records    */
+		M_TRUE,                       /* SQL_C_SBIGINT         */
+		0,                            /* max_insert_records    */
+		M_UINT16_MAX,                 /* max_bind_params       */
 		0,                            /* unknown_size_ind      */
 		mysql_resolve_error,          /* cb_resolve_error      */
 		mysql_cb_connect_runonce,     /* cb_connect_runonce    */
@@ -200,7 +249,9 @@ static const odbc_server_profile_t odbc_server_profiles[] = {
 	{ 
 		"PostgreSQL",                 /* name                  */
 		M_TRUE,                       /* is_multival_insert_cd */
+		M_TRUE,                       /* SQL_C_SBIGINT         */
 		100,                          /* max_insert_records    */
+		0,                            /* max_bind_params       */
 		255,                          /* unknown_size_ind      */
 		pgsql_resolve_error,          /* cb_resolve_error      */
 		pgsql_cb_connect_runonce,     /* cb_connect_runonce    */
@@ -211,7 +262,7 @@ static const odbc_server_profile_t odbc_server_profiles[] = {
 		NULL                          /* cb_rewrite_indexname  */
 	},
 
-	{ NULL, M_FALSE, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL }
+	{ NULL, M_FALSE, M_FALSE, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL }
 };
 
 
@@ -677,6 +728,64 @@ static M_sql_error_t odbc_cb_connect_runonce(M_sql_conn_t *conn, M_sql_driver_co
 }
 
 
+static size_t odbc_num_process_rows(M_bool is_multival_insert_cd, size_t max_rows, size_t max_bind_params, size_t num_params_per_row, size_t num_rows)
+{
+	size_t capable_rows;
+
+	/* Array binding */
+	if (!is_multival_insert_cd) {
+		if (max_rows && num_rows > max_rows)
+			return max_rows;
+		return num_rows;
+	}
+
+	/* Comma delimited */
+	if (num_rows == 1)
+		return num_rows;
+
+	if (num_params_per_row == 0)
+		return 1;
+
+	/* Reduce to max rows */
+	if (max_rows != 0 && num_rows > max_rows)
+		num_rows = max_rows;
+
+	/* Get max rows based on total maximum parameters compared to params per row */
+	capable_rows = ((size_t)max_bind_params) / num_params_per_row;
+	if (capable_rows == 0)
+		return 1;
+
+	/* Reduce maximum rows to actual number of rows provided, if applicable */
+	max_rows = M_MIN(num_rows, capable_rows);
+
+	return max_rows;
+}
+
+
+static size_t odbc_num_bind_rows(M_sql_conn_t *conn, M_sql_stmt_t *stmt) 
+{
+	M_sql_driver_conn_t *dconn    = M_sql_driver_conn_get_conn(conn);
+	return odbc_num_process_rows(
+		dconn->pool_data->profile->is_multival_insert_cd,
+		dconn->pool_data->profile->max_insert_records,
+		dconn->pool_data->profile->max_bind_params,
+		M_sql_driver_stmt_bind_cnt(stmt),
+		M_sql_driver_stmt_bind_rows(stmt)
+	);
+}
+
+
+static size_t odbc_cb_queryrowcnt(M_sql_conn_t *conn, size_t num_params_per_row, size_t num_rows)
+{
+	M_sql_driver_conn_t             *dconn = M_sql_driver_conn_get_conn(conn);
+
+	return odbc_num_process_rows(dconn->pool_data->profile->is_multival_insert_cd,
+		dconn->pool_data->profile->max_insert_records,
+		dconn->pool_data->profile->max_bind_params,
+		num_params_per_row, num_rows);
+}
+
+
 static char *odbc_cb_queryformat(M_sql_conn_t *conn, const char *query, size_t num_params, size_t num_rows, char *error, size_t error_size)
 {
 	M_sql_driver_conn_t             *dconn = M_sql_driver_conn_get_conn(conn);
@@ -685,10 +794,7 @@ static char *odbc_cb_queryformat(M_sql_conn_t *conn, const char *query, size_t n
 	if (dconn->pool_data->profile->is_multival_insert_cd)
 		flags |= M_SQL_DRIVER_QUERYFORMAT_MULITVALUEINSERT_CD;
 
-	if (dconn->pool_data->profile->max_insert_records)
-		num_rows = M_MIN(num_rows, dconn->pool_data->profile->max_insert_records);
-
-	return M_sql_driver_queryformat(query, flags, num_params, num_rows, error, error_size);
+	return M_sql_driver_queryformat(query, flags, num_params, odbc_cb_queryrowcnt(conn, num_params, num_rows), error, error_size);
 }
 
 
@@ -706,13 +812,24 @@ static void odbc_clear_driver_stmt(M_sql_driver_stmt_t *dstmt)
 	M_free(dstmt->bind_cols_status);
 	M_free(dstmt->bind_flat_lens);
 
-	dstmt->bind_cols        = NULL;
-	dstmt->bind_cols_cnt    = 0;
-	dstmt->bind_flat_lens   = NULL;
-	dstmt->bind_cols_status = NULL;
+	dstmt->bind_cols             = NULL;
+	dstmt->bind_cols_cnt         = 0;
+	dstmt->bind_cols_status      = NULL;
+	dstmt->bind_params_processed = 0;
+	dstmt->bind_flat_lens        = NULL;
 
-	/* Close the cursor if there is one */
-	SQLCloseCursor(dstmt->stmt);
+	if (dstmt->temp_vars) {
+		M_llist_destroy(dstmt->temp_vars, M_TRUE);
+	}
+	dstmt->temp_vars             = NULL;
+
+	/* Prepare for re-use */
+	if (dstmt->needs_clear & ODBC_CLEAR_CURSOR)
+		SQLFreeStmt(dstmt->stmt, SQL_CLOSE);
+	if (dstmt->needs_clear & ODBC_CLEAR_PARAMS)
+		SQLFreeStmt(dstmt->stmt, SQL_RESET_PARAMS);
+
+	dstmt->needs_clear      = ODBC_CLEAR_NONE;
 }
 
 
@@ -729,7 +846,7 @@ static void odbc_cb_prepare_destroy(M_sql_driver_stmt_t *dstmt)
 }
 
 
-static M_bool odbc_bind_set_type(M_sql_data_type_t type, SQLSMALLINT *ValueType, SQLSMALLINT *ParameterType)
+static M_bool odbc_bind_set_type(M_sql_data_type_t type, M_bool use_numeric, SQLSMALLINT *ValueType, SQLSMALLINT *ParameterType)
 {
 	/* Uninitialized warning suppress (won't ever actually be used). */
 	*ValueType     = 0;
@@ -752,10 +869,14 @@ static M_bool odbc_bind_set_type(M_sql_data_type_t type, SQLSMALLINT *ValueType,
 			break;
 
 		case M_SQL_DATA_TYPE_INT64:
-			/* XXX: Int64 is really only supported as of Oracle 11.2.
-			 *      Should convert to SQL_C_NUMERIC on older versions. */
-			*ValueType                = SQL_C_SBIGINT;
-			*ParameterType            = SQL_BIGINT;
+			/* Oracle doesn't support SQL_C_SBIGINT, so we need to use SQL_C_NUMERIC */
+			if (use_numeric) {
+				*ValueType                = SQL_C_NUMERIC;
+				*ParameterType            = SQL_NUMERIC;
+			} else {
+				*ValueType                = SQL_C_SBIGINT;
+				*ParameterType            = SQL_BIGINT;
+			}
 			break;
 
 		case M_SQL_DATA_TYPE_TEXT:
@@ -775,9 +896,8 @@ static M_bool odbc_bind_set_type(M_sql_data_type_t type, SQLSMALLINT *ValueType,
 }
 
 
-static void odbc_bind_set_value_array(M_sql_stmt_t *stmt, size_t row, size_t col, size_t col_size, odbc_bind_cols_t *bcol)
+static void odbc_bind_set_value_array(M_sql_stmt_t *stmt, M_sql_data_type_t type, M_bool use_numeric, size_t row, size_t col, size_t col_size, odbc_bind_cols_t *bcol)
 {
-	M_sql_data_type_t    type = M_sql_driver_stmt_bind_get_type(stmt, row, col);
 	const unsigned char *data;
 
 	if (M_sql_driver_stmt_bind_isnull(stmt, row, col)) {
@@ -799,7 +919,19 @@ static void odbc_bind_set_value_array(M_sql_stmt_t *stmt, size_t row, size_t col
 			break;
 
 		case M_SQL_DATA_TYPE_INT64:
-			bcol->data.i64vals[row] = M_sql_driver_stmt_bind_get_int64(stmt, row, col);
+			/* Damn Oracle even as of v18 doesn't support 64bit integers natively in their ODBC driver */
+			if (use_numeric) {
+				M_int64  val   = M_sql_driver_stmt_bind_get_int64(stmt, row, col);
+				/* Need as unsigned little endian */
+				M_uint64 ulval = M_htol64((M_uint64)M_ABS(val));
+
+				M_mem_copy(bcol->data.i64num[row].val, &ulval, sizeof(ulval));
+
+				if (val >= 0)
+					bcol->data.i64num[row].sign = 1;
+			} else {
+				bcol->data.i64vals[row] = M_sql_driver_stmt_bind_get_int64(stmt, row, col);
+			}
 			break;
 
 		case M_SQL_DATA_TYPE_TEXT:
@@ -820,7 +952,7 @@ static void odbc_bind_set_value_array(M_sql_stmt_t *stmt, size_t row, size_t col
 }
 
 
-static M_sql_error_t odbc_bind_params_array(M_sql_driver_stmt_t *dstmt, M_sql_stmt_t *stmt, size_t num_rows, char *error, size_t error_size)
+static M_sql_error_t odbc_bind_params_array(M_sql_driver_stmt_t *dstmt, M_sql_stmt_t *stmt, size_t num_rows, M_bool use_numeric, char *error, size_t error_size)
 {
 	M_sql_error_t        err      = M_SQL_ERROR_SUCCESS;
 	size_t               num_cols = M_sql_driver_stmt_bind_cnt(stmt);
@@ -847,19 +979,41 @@ static M_sql_error_t odbc_bind_params_array(M_sql_driver_stmt_t *dstmt, M_sql_st
 
 	dstmt->bind_cols        = M_malloc_zero(sizeof(*dstmt->bind_cols) * num_cols);
 	dstmt->bind_cols_cnt    = num_cols;
+	/* NOTE: Microsoft's SQLServer driver appears to have a bug where it can exceed the bounds of
+	 * the array passed for SQL_ATTR_PARAM_STATUS_PTR as it appears to igore SQL_ATTR_PARAMSET_SIZE
+	 * when reusing a query handle.  Just an FYI, there's not much we can do, we've switched
+	 * to using comma-delimited inserts.  An identical bug report here:
+	 * https://www.easysoft.com/support/kb/kb00808.html (Issue #2)
+	 */
 	dstmt->bind_cols_status = M_malloc_zero(sizeof(*dstmt->bind_cols_status) * num_rows);
 
-	/* Specify the number of elements in each parameter array.  */
-	rc = SQLSetStmtAttr(dstmt->stmt, SQL_ATTR_PARAMSET_SIZE, (SQLPOINTER)((SQLULEN)num_rows), 0);  
+#ifdef SQL_PARAM_BIND_BY_COLUMN
+	/* Specify use of column-wise binding, should be default */
+	rc = SQLSetStmtAttr(dstmt->stmt, SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
 	if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
-		err = odbc_format_error("SQLSetStmtAttr(SQL_ATTR_PARAMSET_SIZE)", NULL, dstmt, rc, error, error_size);
+		err = odbc_format_error("SQLSetStmtAttr(SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN)", NULL, dstmt, rc, error, error_size);
+		goto done;
+	}
+#endif
+
+	/* Specify the number of elements in each parameter array.  */
+	rc = SQLSetStmtAttr(dstmt->stmt, SQL_ATTR_PARAMSET_SIZE, (SQLPOINTER)((SQLULEN)num_rows), SQL_IS_UINTEGER);
+	if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
+		err = odbc_format_error("SQLSetStmtAttr(SQL_ATTR_PARAMSET_SIZE, num_rows)", NULL, dstmt, rc, error, error_size);
 		goto done;
 	}
 
 	/* Specify an array in which to return the status of each set of parameters */
-	rc = SQLSetStmtAttr(dstmt->stmt, SQL_ATTR_PARAM_STATUS_PTR, dstmt->bind_cols_status, 0);  
+	rc = SQLSetStmtAttr(dstmt->stmt, SQL_ATTR_PARAM_STATUS_PTR, dstmt->bind_cols_status, SQL_IS_POINTER);
 	if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
 		err = odbc_format_error("SQLSetStmtAttr(SQL_ATTR_PARAM_STATUS_PTR)", NULL, dstmt, rc, error, error_size);
+		goto done;
+	}
+
+	/* Specify a variable to indicate how many param sets (rows) were actually processed */
+	rc = SQLSetStmtAttr(dstmt->stmt, SQL_ATTR_PARAMS_PROCESSED_PTR, &dstmt->bind_params_processed, SQL_IS_POINTER);
+	if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
+		err = odbc_format_error("SQLSetStmtAttr(SQL_ATTR_PARAMS_PROCESSED_PTR)", NULL, dstmt, rc, error, error_size);
 		goto done;
 	}
 
@@ -889,8 +1043,15 @@ static M_sql_error_t odbc_bind_params_array(M_sql_driver_stmt_t *dstmt, M_sql_st
 				ParameterValue                   = dstmt->bind_cols[i].data.i32vals;
 				break;
 			case M_SQL_DATA_TYPE_INT64:
-				dstmt->bind_cols[i].data.i64vals = M_malloc_zero(sizeof(*(dstmt->bind_cols[i].data.i64vals)) * num_rows);
-				ParameterValue                   = dstmt->bind_cols[i].data.i64vals;
+				/* Damn Oracle even as of v18 doesn't support 64bit integers natively in their ODBC driver */
+				if (use_numeric) {
+					dstmt->bind_cols[i].data.i64num = M_malloc_zero(sizeof(*(dstmt->bind_cols[i].data.i64num)) * num_rows);
+					ParameterValue                  = dstmt->bind_cols[i].data.i64num;
+					ColumnSize                      = sizeof(*dstmt->bind_cols[i].data.i64num);
+				} else {
+					dstmt->bind_cols[i].data.i64vals = M_malloc_zero(sizeof(*(dstmt->bind_cols[i].data.i64vals)) * num_rows);
+					ParameterValue                   = dstmt->bind_cols[i].data.i64vals;
+				}
 				break;
 			default:
 				/* Increment ColumnSize by 1 to account for NULL termination */
@@ -902,13 +1063,14 @@ static M_sql_error_t odbc_bind_params_array(M_sql_driver_stmt_t *dstmt, M_sql_st
 				break;
 		}
 
-		if (!odbc_bind_set_type(type, &ValueType, &ParameterType)) {
+		if (!odbc_bind_set_type(type, use_numeric, &ValueType, &ParameterType)) {
 			M_snprintf(error, error_size, "Failed to determine data type col %zu", i);
+			err = M_SQL_ERROR_QUERY_FAILURE;
 			goto done;
 		}
 
 		for (row = 0; row < num_rows; row++) {
-			odbc_bind_set_value_array(stmt, row, i, (size_t)ColumnSize, &dstmt->bind_cols[i]);
+			odbc_bind_set_value_array(stmt, type, use_numeric, row, i, (size_t)ColumnSize, &dstmt->bind_cols[i]);
 		}
 
 		rc = SQLBindParameter(
@@ -937,7 +1099,28 @@ done:
 }
 
 
-static void odbc_bind_set_value_flat(M_sql_stmt_t *stmt, size_t row, size_t col, SQLPOINTER *value, SQLLEN *len)
+static void odbc_stmt_add_temp_var(M_sql_stmt_t *stmt, void *var)
+{
+	M_sql_driver_stmt_t *dstmt = M_sql_driver_stmt_get_stmt(stmt);
+
+	if (var == NULL)
+		return;
+
+	if (!dstmt->temp_vars) {
+		struct M_llist_callbacks cb = {
+			NULL, /* equality */
+			NULL, /* duplicate_insert */
+			NULL, /* duplicate_copy */
+			M_free /* value_free */
+		};
+		dstmt->temp_vars = M_llist_create(&cb, M_LLIST_NONE);
+	}
+
+	M_llist_insert(dstmt->temp_vars, var);
+}
+
+
+static void odbc_bind_set_value_flat(M_sql_stmt_t *stmt, M_bool use_numeric, size_t row, size_t col, SQLPOINTER *value, SQLLEN *len)
 {
 	M_sql_data_type_t type = M_sql_driver_stmt_bind_get_type(stmt, row, col);
 	const unsigned char *data;
@@ -961,7 +1144,24 @@ static void odbc_bind_set_value_flat(M_sql_stmt_t *stmt, size_t row, size_t col,
 			break;
 
 		case M_SQL_DATA_TYPE_INT64:
-			*value = M_sql_driver_stmt_bind_get_int64_addr(stmt, row, col);
+			/* Damn Oracle even as of v18 doesn't support 64bit integers natively in their ODBC driver */
+			if (use_numeric) {
+				SQL_NUMERIC_STRUCT *num = M_malloc_zero(sizeof(*num));
+				M_int64  val   = M_sql_driver_stmt_bind_get_int64(stmt, row, col);
+				/* Need as unsigned little endian */
+				M_uint64 ulval = M_htol64((M_uint64)M_ABS(val));
+
+				M_mem_copy(num->val, &ulval, sizeof(ulval));
+
+				if (val >= 0)
+					num->sign = 1;
+
+				*value = num;
+				*len   = sizeof(*num);
+				odbc_stmt_add_temp_var(stmt, num);
+			} else {
+				*value = M_sql_driver_stmt_bind_get_int64_addr(stmt, row, col);
+			}
 			break;
 
 		case M_SQL_DATA_TYPE_TEXT:
@@ -982,7 +1182,7 @@ static void odbc_bind_set_value_flat(M_sql_stmt_t *stmt, size_t row, size_t col,
 }
 
 
-static M_sql_error_t odbc_bind_params_flat(M_sql_driver_stmt_t *dstmt, M_sql_stmt_t *stmt, size_t num_rows, char *error, size_t error_size)
+static M_sql_error_t odbc_bind_params_flat(M_sql_driver_stmt_t *dstmt, M_sql_stmt_t *stmt, size_t num_rows, M_bool use_numeric, char *error, size_t error_size)
 {
 	M_sql_error_t        err      = M_SQL_ERROR_SUCCESS;
 	size_t               num_cols = M_sql_driver_stmt_bind_cnt(stmt);
@@ -1009,6 +1209,13 @@ static M_sql_error_t odbc_bind_params_flat(M_sql_driver_stmt_t *dstmt, M_sql_stm
 		goto done;
 	}
 
+	/* UNSET value in which to return the number of parameter sets processed */
+	rc = SQLSetStmtAttr(dstmt->stmt, SQL_ATTR_PARAMS_PROCESSED_PTR, NULL, 0);  
+	if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
+		err = odbc_format_error("SQLSetStmtAttr(SQL_ATTR_PARAMS_PROCESSED_PTR=NULL)", NULL, dstmt, rc, error, error_size);
+		goto done;
+	}
+
 	for (row = 0; row < num_rows; row++) {
 		for (i = 0; i < num_cols; i++) {
 			SQLSMALLINT          ValueType      = 0;
@@ -1018,11 +1225,12 @@ static M_sql_error_t odbc_bind_params_flat(M_sql_driver_stmt_t *dstmt, M_sql_stm
 			M_sql_data_type_t    type           = M_sql_driver_stmt_bind_get_type(stmt, row, i);
 			size_t               idx            = (row * num_cols) + i;
 
-			if (!odbc_bind_set_type(type, &ValueType, &ParameterType)) {
+			if (!odbc_bind_set_type(type, use_numeric, &ValueType, &ParameterType)) {
 				M_snprintf(error, error_size, "Failed to determine data type for rows %zu col %zu", row, i);
+				err = M_SQL_ERROR_QUERY_FAILURE;
 				goto done;
 			}
-			odbc_bind_set_value_flat(stmt, row, i, &ParameterValue, &dstmt->bind_flat_lens[idx]);
+			odbc_bind_set_value_flat(stmt, use_numeric, row, i, &ParameterValue, &dstmt->bind_flat_lens[idx]);
 
 			if (ParameterValue != NULL) {
 				ColumnSize = (SQLULEN)dstmt->bind_flat_lens[idx];
@@ -1047,7 +1255,7 @@ static M_sql_error_t odbc_bind_params_flat(M_sql_driver_stmt_t *dstmt, M_sql_stm
 
 			if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
 				char prefix[256];
-				M_snprintf(prefix, sizeof(prefix), "SQLBindParameter(row: %zu, col: %zu) failed", row, i);
+				M_snprintf(prefix, sizeof(prefix), "SQLBindParameter(idx: %zu, row: %zu, col: %zu) failed", idx+1, row, i);
 				err = odbc_format_error(prefix, NULL, dstmt, rc, error, error_size);
 				goto done;
 			}
@@ -1059,27 +1267,22 @@ done:
 }
 
 
-static size_t odbc_num_bind_rows(M_sql_conn_t *conn, M_sql_stmt_t *stmt) 
-{
-	M_sql_driver_conn_t *dconn    = M_sql_driver_conn_get_conn(conn);
-	size_t               num_rows = M_sql_driver_stmt_bind_rows(stmt);
-
-	if (dconn->pool_data->profile->max_insert_records) 
-		num_rows = M_MIN(dconn->pool_data->profile->max_insert_records, num_rows);
-
-	return num_rows;
-}
-
-
 static M_sql_error_t odbc_bind_params(M_sql_conn_t *conn, M_sql_driver_stmt_t *dstmt, M_sql_stmt_t *stmt, char *error, size_t error_size)
 {
-	M_sql_driver_conn_t *dconn    = M_sql_driver_conn_get_conn(conn);
-	size_t               num_rows = odbc_num_bind_rows(conn, stmt);
+	M_sql_driver_conn_t *dconn       = M_sql_driver_conn_get_conn(conn);
+	size_t               num_rows    = odbc_num_bind_rows(conn, stmt);
+	M_bool               use_numeric = dconn->pool_data->profile->supports_c_sbigint?M_FALSE:M_TRUE;
+
+	if (M_sql_driver_stmt_bind_cnt(stmt) == 0 || num_rows == 0)
+		return M_SQL_ERROR_SUCCESS;
+
+	/* We will definitely be binding params here, so need to mark that it needs to be cleared before reuse */
+	dstmt->needs_clear |= ODBC_CLEAR_PARAMS;
 
 	if (num_rows == 1 || dconn->pool_data->profile->is_multival_insert_cd)
-		return odbc_bind_params_flat(dstmt, stmt, num_rows, error, error_size);
+		return odbc_bind_params_flat(dstmt, stmt, num_rows, use_numeric, error, error_size);
 
-	return odbc_bind_params_array(dstmt, stmt, num_rows, error, error_size);
+	return odbc_bind_params_array(dstmt, stmt, num_rows, use_numeric, error, error_size);
 }
 
 
@@ -1244,11 +1447,12 @@ static M_sql_error_t odbc_fetch_result_metadata(M_sql_conn_t *conn, M_sql_driver
 
 static M_sql_error_t odbc_cb_execute(M_sql_conn_t *conn, M_sql_stmt_t *stmt, size_t *rows_executed, char *error, size_t error_size)
 {
-	M_sql_driver_stmt_t *dstmt    = M_sql_driver_stmt_get_stmt(stmt);
-	M_sql_error_t        err      = M_SQL_ERROR_SUCCESS;
+	M_sql_driver_stmt_t *dstmt         = M_sql_driver_stmt_get_stmt(stmt);
+	M_sql_driver_conn_t *dconn         = M_sql_driver_conn_get_conn(conn);
+	M_sql_error_t        err           = M_SQL_ERROR_SUCCESS;
 	SQLRETURN            rc;
 	SQLRETURN            exec_rc;
-	SQLSMALLINT          num_cols = 0;
+	SQLSMALLINT          num_cols      = 0;
 
 	/* Calc number of rows we'll try to insert at once */
 	*rows_executed = odbc_num_bind_rows(conn, stmt); 
@@ -1257,6 +1461,54 @@ static M_sql_error_t odbc_cb_execute(M_sql_conn_t *conn, M_sql_stmt_t *stmt, siz
 	if (exec_rc != SQL_SUCCESS && exec_rc != SQL_SUCCESS_WITH_INFO && exec_rc != SQL_NO_DATA) {
 		err = odbc_format_error("SQLExecute failed", NULL, dstmt, exec_rc, error, error_size);
 		goto done;
+	}
+
+	if (*rows_executed > 1 && !dconn->pool_data->profile->is_multival_insert_cd) {
+		size_t i;
+		M_bool has_success = M_FALSE;
+		M_bool has_failure = M_FALSE;
+
+		/* Validate */
+		if (dstmt->bind_params_processed != *rows_executed) {
+			M_snprintf(error, error_size, "SQLExecute expected to process %zu rows, only processed %zu", *rows_executed, (size_t)dstmt->bind_params_processed);
+			err = M_SQL_ERROR_QUERY_FAILURE;
+			goto done;
+		}
+
+		M_mem_set(error, 0, error_size);
+
+		for (i=0; i<*rows_executed; i++) {
+			if (dstmt->bind_cols_status[i] == SQL_PARAM_SUCCESS || dstmt->bind_cols_status[i] == SQL_PARAM_SUCCESS_WITH_INFO) {
+				has_success = M_TRUE;
+				continue;
+			}
+
+			has_failure = M_TRUE;
+
+			/* Record first error condition */
+			if (!M_str_isempty(error)) {
+				const char *reason = "UNKNOWN";
+				if (dstmt->bind_cols_status[i] == SQL_PARAM_ERROR)
+					reason = "ERROR";
+				if (dstmt->bind_cols_status[i] == SQL_PARAM_UNUSED)
+					reason = "UNUSED";
+				M_snprintf(error, error_size, "SQLExecute row %zu of %zu failure: %s", i, *rows_executed, reason);
+			}
+		}
+
+		if (!has_success) {
+			err = M_SQL_ERROR_QUERY_FAILURE;
+			goto done;
+		}
+		if (has_failure) {
+			/* We want to inform the user that they need to split and retry each record individually
+			 * to isolate the error.  Most likely this is a constraint violation but we really have
+			 * no way to know for sure.  */
+			err = M_SQL_ERROR_QUERY_CONSTRAINT;
+			goto done;
+		}
+
+		/* Must be good */
 	}
 
 
@@ -1285,6 +1537,9 @@ static M_sql_error_t odbc_cb_execute(M_sql_conn_t *conn, M_sql_stmt_t *stmt, siz
 		goto done;
 	}
 
+	/* Statement returns results, so it may have a cursor, mark that it may need to be cleared */
+	dstmt->needs_clear |= ODBC_CLEAR_CURSOR;
+
 	err = odbc_fetch_result_metadata(conn, dstmt, stmt, (size_t)num_cols, error, error_size);
 	if (M_sql_error_is_error(err))
 		goto done;
@@ -1305,11 +1560,12 @@ done:
 
 static M_sql_error_t odbc_cb_fetch(M_sql_conn_t *conn, M_sql_stmt_t *stmt, char *error, size_t error_size)
 {
-	M_sql_driver_stmt_t *dstmt    = M_sql_driver_stmt_get_stmt(stmt);
-	size_t               num_cols = M_sql_stmt_result_num_cols(stmt);
+	M_sql_driver_conn_t *dconn       = M_sql_driver_conn_get_conn(conn);
+	M_sql_driver_stmt_t *dstmt       = M_sql_driver_stmt_get_stmt(stmt);
+	size_t               num_cols    = M_sql_stmt_result_num_cols(stmt);
+	M_bool               use_numeric = dconn->pool_data->profile->supports_c_sbigint?M_FALSE:M_TRUE;
 	size_t               i;
 	SQLRETURN            rc;
-
 	(void)conn;
 
 	rc = SQLFetch(dstmt->stmt);
@@ -1359,13 +1615,22 @@ static M_sql_error_t odbc_cb_fetch(M_sql_conn_t *conn, M_sql_stmt_t *stmt, char 
 				break;
 
 			case M_SQL_DATA_TYPE_INT64:
-				TargetType  = SQL_C_SBIGINT;
-				TargetValue = &i64;
+				/* Oracle doesn't support 64bit integers even in v18.  Request result as a string */
+				if (use_numeric) {
+					data_size    = 20+1; /* Additional size for NULL terminator */
+					data         = M_buf_direct_write_start(buf, &data_size);
+					TargetType   = SQL_C_CHAR;
+					BufferLength = (SQLLEN)data_size;
+					TargetValue  = data;
+				} else {
+					TargetType  = SQL_C_SBIGINT;
+					TargetValue = &i64;
+				}
 				break;
 
 			case M_SQL_DATA_TYPE_BINARY:
 			case M_SQL_DATA_TYPE_TEXT:
-			default: /* Should never be used */
+			default: /* Default should never be used */
 				if (type == M_SQL_DATA_TYPE_BINARY) {
 					TargetType   = SQL_C_BINARY;
 				} else {
@@ -1434,7 +1699,12 @@ static M_sql_error_t odbc_cb_fetch(M_sql_conn_t *conn, M_sql_stmt_t *stmt, char 
 				break;
 
 			case M_SQL_DATA_TYPE_INT64:
-				M_buf_add_int(buf, i64);
+				/* Oracle copied as a string, only use integer type on other systems */
+				if (use_numeric) {
+					M_buf_direct_write_end(buf, (size_t)StrLen);
+				} else {
+					M_buf_add_int(buf, i64);
+				}
 				break;
 
 			case M_SQL_DATA_TYPE_BINARY:
@@ -1528,7 +1798,7 @@ static M_sql_error_t odbc_end_tran(M_sql_conn_t *conn, M_bool is_rollback, char 
 
 static M_sql_error_t odbc_cb_rollback(M_sql_conn_t *conn)
 {
-	char           error[256];
+	char           error[512];
 	M_sql_error_t  err   = odbc_end_tran(conn, M_TRUE, error, sizeof(error));
 
 	if (M_sql_error_is_error(err)) {
@@ -1610,6 +1880,7 @@ static M_sql_driver_t M_sql_odbc = {
 	odbc_cb_connect_runonce,      /* Callback used after connection is established, but before first query to set run-once options. */
 	odbc_cb_disconnect,           /* Callback used to disconnect from the db */
 	odbc_cb_queryformat,          /* Callback used for reformatting a query to the sql db requirements */
+	odbc_cb_queryrowcnt,          /* Callback used for determining how many rows will be processed by the current execution (chunking rows) */
 	odbc_cb_prepare,              /* Callback used for preparing a query for execution */
 	odbc_cb_prepare_destroy,      /* Callback used to destroy the driver-specific prepared statement handle */
 	odbc_cb_execute,              /* Callback used for executing a prepared query */

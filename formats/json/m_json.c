@@ -195,6 +195,44 @@ void M_json_node_destroy(M_json_node_t *node)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+#define ERRCASE(x) case x: ret = #x; break
+
+const char *M_json_errcode_to_str(M_json_error_t err)
+{
+	const char *ret = "unknown";
+
+	switch (err) {
+		ERRCASE(M_JSON_ERROR_SUCCESS);
+		ERRCASE(M_JSON_ERROR_GENERIC);
+		ERRCASE(M_JSON_ERROR_MISUSE);
+		ERRCASE(M_JSON_ERROR_INVALID_START);
+		ERRCASE(M_JSON_ERROR_EXPECTED_END);
+		ERRCASE(M_JSON_ERROR_MISSING_COMMENT_CLOSE);
+		ERRCASE(M_JSON_ERROR_UNEXPECTED_COMMENT_START);
+		ERRCASE(M_JSON_ERROR_INVALID_PAIR_START);
+		ERRCASE(M_JSON_ERROR_DUPLICATE_KEY);
+		ERRCASE(M_JSON_ERROR_MISSING_PAIR_SEPARATOR);
+		ERRCASE(M_JSON_ERROR_OBJECT_UNEXPECTED_CHAR);
+		ERRCASE(M_JSON_ERROR_EXPECTED_VALUE);
+		ERRCASE(M_JSON_ERROR_UNCLOSED_OBJECT);
+		ERRCASE(M_JSON_ERROR_ARRAY_UNEXPECTED_CHAR);
+		ERRCASE(M_JSON_ERROR_UNCLOSED_ARRAY);
+		ERRCASE(M_JSON_ERROR_UNEXPECTED_NEWLINE);
+		ERRCASE(M_JSON_ERROR_UNEXPECTED_CONTROL_CHAR);
+		ERRCASE(M_JSON_ERROR_INVALID_UNICODE_ESACPE);
+		ERRCASE(M_JSON_ERROR_UNEXPECTED_ESCAPE);
+		ERRCASE(M_JSON_ERROR_UNCLOSED_STRING);
+		ERRCASE(M_JSON_ERROR_INVALID_BOOL);
+		ERRCASE(M_JSON_ERROR_INVALID_NULL);
+		ERRCASE(M_JSON_ERROR_INVALID_NUMBER);
+		ERRCASE(M_JSON_ERROR_UNEXPECTED_TERMINATION);
+		ERRCASE(M_JSON_ERROR_INVALID_IDENTIFIER);
+		ERRCASE(M_JSON_ERROR_UNEXPECTED_END);
+	}
+
+	return ret;
+}
+
 M_json_type_t M_json_node_type(const M_json_node_t *node)
 {
 	if (node == NULL)
@@ -265,6 +303,14 @@ M_list_str_t *M_json_object_keys(const M_json_node_t *node)
 	M_hash_strvp_enumerate_free(hashenum);
 
 	return keys;
+}
+
+size_t M_json_object_num_children(const M_json_node_t *node)
+{
+	if (node == NULL || node->type != M_JSON_TYPE_OBJECT)
+		return 0;
+
+	return M_hash_strvp_num_keys(node->data.json_object);
 }
 
 M_bool M_json_object_insert(M_json_node_t *node, const char *key, M_json_node_t *value)

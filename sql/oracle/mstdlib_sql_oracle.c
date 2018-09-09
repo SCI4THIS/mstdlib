@@ -456,6 +456,14 @@ static char *oracle_cb_queryformat(M_sql_conn_t *conn, const char *query, size_t
 }
 
 
+static size_t oracle_cb_queryrowcnt(M_sql_conn_t *conn, size_t num_params_per_row, size_t num_rows)
+{
+	(void)conn;
+	(void)num_params_per_row;
+	return num_rows;
+}
+
+
 static void oracle_clear_driver_stmt(M_sql_driver_stmt_t *dstmt)
 {
 	size_t i;
@@ -1191,6 +1199,19 @@ static M_sql_error_t oracle_cb_execute(M_sql_conn_t *conn, M_sql_stmt_t *stmt, s
 		goto done;
 	}
 
+	if (*rows_executed > 1) {
+		/* It is not clear from the docs if you could get a 'partial' insert that returns success.
+		 * So we are going to sanity check this, and assume an error is a constraint violation which
+		 * the caller knows means they need to split and repeat. */
+		ub4 num_errs = 0;
+		OCIAttrGet(dstmt->stmt, OCI_HTYPE_STMT, &num_errs, 0, OCI_ATTR_NUM_DML_ERRORS, dconn->err_handle);
+		if (num_errs) {
+			M_snprintf(error, error_size, "OCI array operation had one or more row failures");
+			err = M_SQL_ERROR_QUERY_CONSTRAINT;
+			goto done;
+		}
+	}
+
 	if (dstmt->is_query) {
 		/* Get column count, names, types */
 		err = oracle_fetch_result_metadata(dconn, dstmt, stmt, error, error_size);
@@ -1402,6 +1423,7 @@ static M_sql_driver_t M_sql_oracle = {
 	oracle_cb_connect_runonce,     /* Callback used after connection is established, but before first query to set run-once options. */
 	oracle_cb_disconnect,          /* Callback used to disconnect from the db */
 	oracle_cb_queryformat,         /* Callback used for reformatting a query to the sql db requirements */
+	oracle_cb_queryrowcnt,         /* Callback used for determining how many rows will be processed by the current execution (chunking rows) */
 	oracle_cb_prepare,             /* Callback used for preparing a query for execution */
 	oracle_cb_prepare_destroy,     /* Callback used to destroy the driver-specific prepared statement handle */
 	oracle_cb_execute,             /* Callback used for executing a prepared query */

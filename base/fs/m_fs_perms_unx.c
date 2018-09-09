@@ -75,7 +75,6 @@ static __inline__ mode_t M_fs_perms_update_mode_from_perm_part(mode_t mode, cons
 	switch (*mytype) {
 		case M_FS_PERMS_TYPE_EXACT:
 			mode &= ~(mode_t)(s_read|s_write|s_exec);
-			break;
 		case M_FS_PERMS_TYPE_ADD:
 			if (*mymode & M_FS_PERMS_MODE_READ)
 				mode |= s_read;
@@ -105,8 +104,8 @@ static __inline__ mode_t M_fs_perms_to_mode_part(const M_bool *isdir,
 {
 	const M_fs_perms_mode_t *mymode;
 	const M_fs_perms_type_t *mytype;
-	mode_t                mode  = 0;
-	M_bool                isset = M_FALSE;
+	mode_t                   mode  = 0;
+	M_bool                   isset = M_FALSE;
 
 	if (*isdir && *p_dir_set) {
 		isset  = M_TRUE;
@@ -134,22 +133,24 @@ static __inline__ mode_t M_fs_perms_to_mode_part(const M_bool *isdir,
 
 static mode_t M_fs_perms_update_mode_from_perms(mode_t mode, const M_fs_perms_t *perms, M_bool isdir)
 {
-	mode = M_fs_perms_update_mode_from_perm_part(mode, &isdir,
+	mode_t mymode = 0;
+
+	mymode |= M_fs_perms_update_mode_from_perm_part(mode, &isdir,
 		&(perms->user_set), &(perms->dir_user_set),
 		&(perms->user_mode), &(perms->dir_user_mode),
 		&(perms->user_type), &(perms->dir_user_type),
 		S_IRUSR, S_IWUSR, S_IXUSR);
-	mode = M_fs_perms_update_mode_from_perm_part(mode, &isdir,
+	mymode |= M_fs_perms_update_mode_from_perm_part(mode, &isdir,
 		&(perms->group_set), &(perms->dir_group_set),
 		&(perms->group_mode), &(perms->dir_group_mode),
 		&(perms->group_type), &(perms->dir_group_type),
 		S_IRGRP, S_IWGRP, S_IXGRP);
-	mode = M_fs_perms_update_mode_from_perm_part(mode, &isdir,
+	mymode |= M_fs_perms_update_mode_from_perm_part(mode, &isdir,
 		&(perms->other_set), &(perms->dir_other_set),
 		&(perms->other_mode), &(perms->dir_other_mode),
 		&(perms->other_type), &(perms->dir_other_type),
 		S_IROTH, S_IWOTH, S_IXOTH);
-	return mode;
+	return mymode;
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -244,6 +245,43 @@ M_fs_error_t M_fs_perms_set_perms(const M_fs_perms_t *perms, const char *path)
 
 	M_fs_info_destroy(info);
 	M_free(norm_path);
+	return M_FS_ERROR_SUCCESS;
+}
+
+M_fs_error_t M_fs_perms_set_perms_file(const M_fs_perms_t *perms, M_fs_file_t *fd)
+{
+	M_fs_info_t  *info;
+	M_fs_error_t  res;
+	mode_t        mode = 0;
+
+	if (perms == NULL || fd == NULL) {
+		return M_FS_ERROR_INVALID;
+	}
+
+	res = M_fs_info_file(&info, fd, M_FS_PATH_INFO_FLAGS_FOLLOW_SYMLINKS);
+	if (res != M_FS_ERROR_SUCCESS) {
+		return res;
+	}
+
+	mode = M_fs_perms_to_mode(M_fs_info_get_perms(info), M_FALSE);
+	mode = M_fs_perms_update_mode_from_perms(mode, perms, (M_fs_info_get_type(info)==M_FS_TYPE_DIR)?M_TRUE:M_FALSE);
+	if (fchmod(fd->fd, mode) == -1) {
+		M_fs_info_destroy(info);
+		return M_fs_error_from_syserr(errno);
+	}
+
+	if (perms->user != NULL || perms->group != NULL) {
+		if (fchown(fd->fd,
+				(perms->user != NULL)?perms->uid:(uid_t)-1,
+				(perms->group != NULL)?perms->gid:(gid_t)-1)
+			== -1)
+		{
+			M_fs_info_destroy(info);
+			return M_fs_error_from_syserr(errno);
+		}
+	}
+
+	M_fs_info_destroy(info);
 	return M_FS_ERROR_SUCCESS;
 }
 

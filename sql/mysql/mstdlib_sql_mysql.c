@@ -371,17 +371,32 @@ static void mysql_cb_disconnect(M_sql_driver_conn_t *conn)
 }
 
 
-static size_t mysql_num_process_rows(size_t num_rows, size_t params_per_row)
+static size_t mysql_num_process_rows(size_t num_params_per_row, size_t num_rows)
 {
-	size_t max_rows;
+	size_t       capable_rows;
 
-	if (num_rows <= 1 || params_per_row == 0)
+	/* === Config Values === */
+	const size_t max_rows        = 0;
+	const size_t max_bind_params = M_UINT16_MAX;
+	/* === */
+
+	if (num_rows == 1)
+		return num_rows;
+
+	if (num_params_per_row == 0)
 		return 1;
 
-	/* MySQL can support up to 64K rows at once */
-	max_rows = M_UINT16_MAX / params_per_row;
+	/* Reduce to max rows */
+	if (max_rows != 0 && num_rows > max_rows)
+		num_rows = max_rows;
 
-	return M_MIN(num_rows, max_rows);
+	/* Get max rows based on total maximum parameters compared to params per row */
+	capable_rows = ((size_t)max_bind_params) / num_params_per_row;
+	if (capable_rows == 0)
+		return 1;
+
+	/* Reduce maximum rows to actual number of rows provided, if applicable */
+	return M_MIN(num_rows, capable_rows);
 }
 
 
@@ -389,8 +404,15 @@ static char *mysql_cb_queryformat(M_sql_conn_t *conn, const char *query, size_t 
 {
 	(void)conn;
 	return M_sql_driver_queryformat(query, M_SQL_DRIVER_QUERYFORMAT_MULITVALUEINSERT_CD,
-	                                num_params, mysql_num_process_rows(num_rows, num_params),
+	                                num_params, mysql_num_process_rows(num_params, num_rows),
 	                                error, error_size);
+}
+
+
+static size_t mysql_cb_queryrowcnt(M_sql_conn_t *conn, size_t num_params_per_row, size_t num_rows)
+{
+	(void)conn;
+	return mysql_num_process_rows(num_params_per_row, num_rows);
 }
 
 
@@ -441,7 +463,7 @@ static M_sql_error_t mysql_bind_params(M_sql_driver_stmt_t *driver_stmt, M_sql_s
 	M_sql_error_t err      = M_SQL_ERROR_SUCCESS;
 	unsigned int  merr;
 	size_t        num_cols = M_sql_driver_stmt_bind_cnt(stmt);
-	size_t        num_rows = mysql_num_process_rows(M_sql_driver_stmt_bind_rows(stmt), num_cols);
+	size_t        num_rows = mysql_num_process_rows(num_cols, M_sql_driver_stmt_bind_rows(stmt));
 	size_t        row;
 	size_t        i;
 
@@ -760,7 +782,7 @@ static M_sql_error_t mysql_cb_execute(M_sql_conn_t *conn, M_sql_stmt_t *stmt, si
 
 	/* Get number of rows that are processed at once, supports
 	 * comma-delimited values for inserting multiple rows. */
-	*rows_executed = mysql_num_process_rows(M_sql_driver_stmt_bind_rows(stmt), M_sql_driver_stmt_bind_cnt(stmt));
+	*rows_executed = mysql_num_process_rows(M_sql_driver_stmt_bind_cnt(stmt), M_sql_driver_stmt_bind_rows(stmt));
 
 	if (mysql_stmt_execute(driver_stmt->stmt) != 0) {
 		unsigned int merr = mysql_stmt_errno(driver_stmt->stmt);
@@ -790,6 +812,14 @@ static M_sql_error_t mysql_cb_fetch(M_sql_conn_t *conn, M_sql_stmt_t *stmt, char
 	M_bool                          rebind      = M_FALSE;
 
 	(void)conn;
+
+	/* Working assumption that bind[idx].xxx may not be properly set, so lets go through and
+	 * pre-set reasonable values */
+	for (i=0; i<result->num_cols; i++) {
+		result->col_isnull[i] = 0;
+		result->col_length[i] = 0;
+		result->col_error[i]  = 0;
+	}
 
 	/* NOTE: There is no reason to call this in a loop up to stmt->max_fetch_rows as when the
 	 *       SQL subsystem realizes we returned less rows than that value, it will simply keep
@@ -1025,6 +1055,7 @@ static M_sql_driver_t M_sql_mysql = {
 	mysql_cb_connect_runonce,     /* Callback used after connection is established, but before first query to set run-once options. */
 	mysql_cb_disconnect,          /* Callback used to disconnect from the db */
 	mysql_cb_queryformat,         /* Callback used for reformatting a query to the sql db requirements */
+	mysql_cb_queryrowcnt,         /* Callback used for determining how many rows will be processed by the current execution (chunking rows) */
 	mysql_cb_prepare,             /* Callback used for preparing a query for execution */
 	mysql_cb_prepare_destroy,     /* Callback used to destroy the driver-specific prepared statement handle */
 	mysql_cb_execute,             /* Callback used for executing a prepared query */

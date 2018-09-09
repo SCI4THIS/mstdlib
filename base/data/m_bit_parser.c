@@ -30,49 +30,91 @@
 
 struct M_bit_parser {
 	const M_uint8 *bytes;
+
 	size_t         nbits;
 	size_t         offset;
 	size_t         marked_offset;
-	M_uint8       *bytes_copy;    /* If we own a copy of the data we're parsing, the copy will be stored here. */
+	M_bit_buf_t   *bbuf;         /* If we own a copy of the data we're parsing, the copy will be stored here. */
 }; /* typedef'd to M_bit_parser_t in header. */
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static M_bool peek_next_bit(M_bit_parser_t *bparser, M_uint8 *bit)
+static M_uint8 peek_next_bit(M_bit_parser_t *bparser)
 {
-	size_t byte_idx;
-	size_t pos_in_byte;
-	
-	if (bparser->offset >= bparser->nbits) {
-		return M_FALSE;
+	size_t  byte_idx    = bparser->offset / 8;
+	size_t  pos_in_byte = 7 - (bparser->offset % 8);
+	M_uint8 bit;
+
+	if ((bparser->bytes[byte_idx] & (1 << pos_in_byte)) != 0) {
+		bit = 1;
+	} else {
+		bit = 0;
 	}
 
-	byte_idx    = bparser->offset / 8;
-	pos_in_byte = 7 - (bparser->offset % 8);
-	
-	if ((bparser->bytes[byte_idx] & (1 << pos_in_byte)) != 0) {
-		*bit = 1;
-	} else {
-		*bit = 0;
+	return bit;
+}
+
+
+/* Return number of bytes written. */
+static size_t peek_next_bytes(M_bit_parser_t *bparser, M_uint8 *dest, size_t destlen, size_t nbits, M_bool strict_pad)
+{
+	size_t         byteidx;
+	size_t         bitskip;
+	size_t         nbytes;
+	const M_uint8 *src;
+
+	if (nbits == 0) {
+		return 0;
 	}
-	
-	return M_TRUE;
+	if (bparser->offset + nbits > bparser->nbits) {
+		return 0;
+	}
+
+	nbytes  = (nbits + 7) / 8;
+	byteidx = bparser->offset / 8;
+	bitskip = bparser->offset % 8; /* number of bits to skip past on left side of first byte of source. */
+	src     = bparser->bytes + byteidx;
+
+	if (destlen < nbytes) {
+		return 0;
+	}
+
+	if (bitskip == 0) {
+		/* If the data we're reading starts on a byte boundary, copy the data over byte-wise. */
+		M_mem_copy(dest, src, nbytes);
+	} else {
+		M_uint8 invskip = (M_uint8)(8 - bitskip); /* number of bits to skip from right side of next byte */
+		size_t  i;
+		for (i=0; i<nbytes; i++) {
+			dest[i] = (M_uint8)((src[i] << bitskip) | (src[i + 1] >> invskip));
+		}
+	}
+
+	/* Make sure any extra padding bits on end of last byte are set to zero. */
+	if (strict_pad) {
+		size_t pad = nbits % 8;
+		if (pad > 0) {
+			pad = 8 - pad;
+			dest[nbytes - 1] = (M_uint8)(dest[nbytes - 1] & ~(M_uint8)((1 << pad) - 1));
+		}
+	}
+
+	return nbytes;
 }
 
 
 M_bit_parser_t *M_bit_parser_create(const void *bytes, size_t nbits)
 {
 	M_bit_parser_t *bparser;
-	size_t          nbytes;
-	
-	nbytes = (nbits + 7) / 8;
-	
-	bparser = M_malloc_zero(sizeof(*bparser));
-	
-	bparser->nbits      = nbits;
-	bparser->bytes_copy = M_memdup(bytes, nbytes);
-	bparser->bytes      = bparser->bytes_copy;
-	
+
+	bparser        = M_malloc_zero(sizeof(*bparser));
+
+	bparser->bbuf  = M_bit_buf_create();
+	M_bit_buf_add_bytes(bparser->bbuf, bytes, nbits);
+
+	bparser->nbits = nbits;
+	bparser->bytes = M_bit_buf_peek(bparser->bbuf);
+
 	return bparser;
 }
 
@@ -90,10 +132,29 @@ M_bit_parser_t *M_bit_parser_create_const(const void *bytes, size_t nbits)
 }
 
 
+void M_bit_parser_append(M_bit_parser_t *bparser, const void *bytes, size_t nbits)
+{
+	if (bparser == NULL || bytes == NULL || nbits == 0) {
+		return;
+	}
+
+	if (bparser->bbuf == NULL) {
+		/* If this used to be a const parser, create a new internal buffer and copy the old
+		 * const data into it.
+		 */
+		bparser->bbuf = M_bit_buf_create();
+		M_bit_buf_reserve(bparser->bbuf, bparser->nbits + nbits);
+		M_bit_buf_add_bytes(bparser->bbuf, bparser->bytes, bparser->nbits);
+	}
+
+	M_bit_buf_add_bytes(bparser->bbuf, bytes, nbits);
+	bparser->nbits = M_bit_buf_len(bparser->bbuf);
+	bparser->bytes = M_bit_buf_peek(bparser->bbuf);
+}
+
+
 void M_bit_parser_reset(M_bit_parser_t *bparser, const void *bytes, size_t nbits)
 {
-	size_t nbytes;
-
 	if (bparser == NULL) {
 		return;
 	}
@@ -101,28 +162,20 @@ void M_bit_parser_reset(M_bit_parser_t *bparser, const void *bytes, size_t nbits
 	/* Wipe out old data, if any. This ensures that, even if the new data set is smaller than the old one,
 	 * any sensitive stuff at the end of the array will always be cleared out.
 	 */
-	if (bparser->bytes_copy != NULL) {
-		M_mem_set(bparser->bytes_copy, 0xFF, (bparser->nbits + 7) / 8);
+	if (bparser->bbuf != NULL) {
+		M_bit_buf_truncate(bparser->bbuf, 0);
+	} else {
+		bparser->bbuf = M_bit_buf_create();
 	}
 
 	/* Store new data (if any). */
-	if (nbits > 0 && bytes != NULL) {
-		nbytes = (nbits + 7) / 8;
-		if (bparser->bytes_copy != NULL && bparser->nbits >= nbits) {
-			/* If we already have internally-allocated memory that's big enough, reuse it. */
-			M_mem_copy(bparser->bytes_copy, bytes, nbytes);
-		} else {
-			/* If it's not big enough, reallocate a larger chunk and use that. */
-			M_free(bparser->bytes_copy);
-			bparser->bytes_copy = M_memdup(bytes, nbytes);
-		}
-	}
+	M_bit_buf_add_bytes(bparser->bbuf, bytes, nbits);
 
 	/* Reset all the other parser parameters. */
 	bparser->offset        = 0;
 	bparser->marked_offset = 0;
-	bparser->nbits         = nbits;
-	bparser->bytes         = bparser->bytes_copy;
+	bparser->nbits         = M_bit_buf_len(bparser->bbuf);
+	bparser->bytes         = M_bit_buf_peek(bparser->bbuf);
 }
 
 
@@ -131,9 +184,9 @@ void M_bit_parser_destroy(M_bit_parser_t *bparser)
 	if (bparser == NULL) {
 		return;
 	}
-	
-	M_free(bparser->bytes_copy);
-	
+
+	M_bit_buf_destroy(bparser->bbuf);
+
 	M_free(bparser);
 }
 
@@ -143,7 +196,7 @@ size_t M_bit_parser_len(M_bit_parser_t *bparser)
 	if (bparser == NULL || bparser->offset >= bparser->nbits) {
 		return 0;
 	}
-	
+
 	return bparser->nbits - bparser->offset;
 }
 
@@ -160,6 +213,10 @@ size_t M_bit_parser_current_offset(M_bit_parser_t *bparser)
 
 void M_bit_parser_rewind_to_start(M_bit_parser_t *bparser)
 {
+	if (bparser == NULL) {
+		return;
+	}
+
 	bparser->offset        = 0;
 	bparser->marked_offset = 0;
 }
@@ -170,7 +227,7 @@ void M_bit_parser_mark(M_bit_parser_t *bparser)
 	if (bparser == NULL) {
 		return;
 	}
-	
+
 	bparser->marked_offset = bparser->offset;
 }
 
@@ -188,14 +245,14 @@ size_t M_bit_parser_mark_len(M_bit_parser_t *bparser)
 size_t M_bit_parser_mark_rewind(M_bit_parser_t *bparser)
 {
 	size_t nrewind;
-	
+
 	if (bparser == NULL) {
 		return 0;
 	}
-	
+
 	nrewind         = bparser->offset - bparser->marked_offset;
 	bparser->offset = bparser->marked_offset;
-	
+
 	return nrewind;
 }
 
@@ -206,10 +263,10 @@ M_bool M_bit_parser_consume(M_bit_parser_t *bparser, size_t nbits)
 		return M_TRUE;
 	}
 
-	if (nbits > M_bit_parser_len(bparser)) {
+	if (bparser == NULL || nbits > M_bit_parser_len(bparser)) {
 		return M_FALSE;
 	}
-	
+
 	bparser->offset += nbits;
 	return M_TRUE;
 }
@@ -217,13 +274,11 @@ M_bool M_bit_parser_consume(M_bit_parser_t *bparser, size_t nbits)
 
 M_bool M_bit_parser_peek_bit(M_bit_parser_t *bparser, M_uint8 *bit)
 {
-	if (bparser == NULL || bit == NULL) {
+	if (bparser == NULL || bit == NULL || bparser->offset >= bparser->nbits) {
 		return M_FALSE;
 	}
 
-	if (!peek_next_bit(bparser, bit)) {
-		return M_FALSE;
-	}
+	*bit = peek_next_bit(bparser);
 
 	return M_TRUE;
 }
@@ -241,8 +296,7 @@ M_bool M_bit_parser_read_bit(M_bit_parser_t *bparser, M_uint8 *bit)
 
 M_bool M_bit_parser_read_bit_buf(M_bit_parser_t *bparser, M_bit_buf_t *bbuf, size_t nbits)
 {
-	M_uint8 bit = 0;
-	size_t  i;
+	size_t i;
 
 	if (nbits == 0) {
 		return M_TRUE;
@@ -253,12 +307,64 @@ M_bool M_bit_parser_read_bit_buf(M_bit_parser_t *bparser, M_bit_buf_t *bbuf, siz
 	}
 
 	for (i=0; i<nbits; i++) {
-		peek_next_bit(bparser, &bit);
+		M_bit_buf_add_bit(bbuf, peek_next_bit(bparser));
 		bparser->offset++;
-
-		M_bit_buf_add_bit(bbuf, bit);
 	}
 
+	return M_TRUE;
+}
+
+
+M_bool M_bit_parser_read_buf(M_bit_parser_t *bparser, M_buf_t *buf, size_t nbits)
+{
+	M_uint8 *dest;
+	size_t   destlen;
+
+	if (nbits == 0) {
+		return M_TRUE;
+	}
+	if (bparser == NULL || buf == NULL) {
+		return M_FALSE;
+	}
+
+	destlen = (nbits + 7) / 8;
+	dest    = M_buf_direct_write_start(buf, &destlen);
+	destlen = peek_next_bytes(bparser, dest, destlen, nbits, M_TRUE);
+
+	M_buf_direct_write_end(buf, destlen);
+
+	if (destlen == 0) {
+		return M_FALSE;
+	}
+
+	bparser->offset += nbits;
+	return M_TRUE;
+}
+
+
+M_bool M_bit_parser_read_bytes(M_bit_parser_t *bparser, M_uint8 *dest, size_t *destlen, size_t nbits)
+{
+	size_t mydestlen;
+
+	if (destlen == NULL) {
+		destlen = &mydestlen;
+	}
+
+	if (nbits == 0) {
+		*destlen = 0;
+		return M_TRUE;
+	}
+	if (bparser == NULL || dest == NULL || destlen == NULL || *destlen == 0) {
+		*destlen = 0;
+		return M_FALSE;
+	}
+
+	*destlen = peek_next_bytes(bparser, dest, *destlen, nbits, M_TRUE);
+
+	if (*destlen == 0) {
+		return M_FALSE;
+	}
+	bparser->offset += nbits;
 	return M_TRUE;
 }
 
@@ -266,50 +372,102 @@ M_bool M_bit_parser_read_bit_buf(M_bit_parser_t *bparser, M_bit_buf_t *bbuf, siz
 char *M_bit_parser_read_strdup(M_bit_parser_t *bparser, size_t nbits)
 {
 	M_buf_t *buf;
-	M_uint8  bit = 0;
 	size_t   i;
-	
+
 	if (nbits == 0 || M_bit_parser_len(bparser) < nbits) {
 		return NULL;
 	}
-	
-	buf = M_buf_create();
-	
-	for (i=0; i<nbits; i++) {
-		peek_next_bit(bparser, &bit);
-		bparser->offset++;
 
-		M_buf_add_byte(buf, (bit == 0)? '0' : '1');
+	buf = M_buf_create();
+
+	for (i=0; i<nbits; i++) {
+		M_buf_add_byte(buf, (peek_next_bit(bparser) == 0)? '0' : '1');
+		bparser->offset++;
 	}
-	
+
 	return M_buf_finish_str(buf, NULL);
 }
 
 
 M_bool M_bit_parser_read_uint(M_bit_parser_t *bparser, size_t nbits, M_uint64 *res)
 {
+	M_uint8 arr[8] = {0};
 	size_t  i;
+	size_t  nbytes;
 
 	if (res == NULL) {
 		return M_FALSE;
 	}
-
 	*res = 0;
 
-	if (bparser == NULL || nbits == 0 || nbits > 64 || M_bit_parser_len(bparser) < nbits) {
+	if (nbits == 0) {
+		return M_TRUE;
+	}
+
+	if (bparser == NULL || nbits > 64 || M_bit_parser_len(bparser) < nbits) {
 		return M_FALSE;
 	}
 
-	for (i=0; i<nbits; i++) {
-		M_uint8 bit = 0;
+	nbytes = peek_next_bytes(bparser, arr, sizeof(arr), nbits, M_FALSE);
+	if (nbytes == 0) {
+		return M_FALSE;
+	}
+	for (i=0; i<nbytes; i++) {
+		*res <<= 8;
+		*res = (M_uint64)(*res | arr[i]);
+	}
 
-		peek_next_bit(bparser, &bit);
-		bparser->offset++;
+	/* If last byte was a partial, shift right to remove padding bits. */
+	i = nbits % 8;
+	if (i > 0) {
+		*res >>= (8 - i);
+	}
 
-		/* Move current contents up by one bit position. */
-		*res <<= 1;
-		/* Store next bit in lowest bit position. */
-		*res = (M_uint64)(*res | bit);
+	bparser->offset += nbits;
+
+	return M_TRUE;
+}
+
+
+M_bool M_bit_parser_read_int(M_bit_parser_t *bparser, size_t nbits, M_bit_parser_int_format_t fmt, M_int64 *res)
+{
+	M_uint64 mask;
+	M_uint8  sign;
+	M_uint64 val;
+
+	if (res != NULL) {
+		*res = 0;
+	}
+
+	if (bparser == NULL || nbits < 2 || res == NULL) {
+		return M_FALSE;
+	}
+
+	switch (fmt) {
+		case M_BIT_PARSER_SIGN_MAG:  /* Signed magnitude. */
+			if (M_bit_parser_read_bit(bparser, &sign) && M_bit_parser_read_uint(bparser, nbits - 1, &val)) {
+				*res = (sign == 0)? (M_int64)val : -(M_int64)val;
+			}
+			break;
+		case M_BIT_PARSER_ONES_COMP: /* One's complement. */
+			if (M_bit_parser_read_uint(bparser, nbits, &val)) {
+				mask = (M_uint64)1 << (nbits - 1);
+				if ((val & mask) != 0) {
+					val  = (~val) & (mask - 1);
+					*res = -(M_int64)val;
+				} else {
+					*res = (M_int64)val;
+				}
+			}
+			break;
+		case M_BIT_PARSER_TWOS_COMP: /* Two's complement. */
+			if (M_bit_parser_read_uint(bparser, nbits, &val)) {
+				mask = (M_uint64)1 << (nbits - 1);
+				*res = (M_int64)((val ^ mask) - mask);
+			}
+			break;
+		default:
+			return M_FALSE;
 	}
 
 	return M_TRUE;
@@ -334,12 +492,12 @@ M_bool M_bit_parser_read_range(M_bit_parser_t *bparser, M_uint8 *bit, size_t *nb
 	}
 	*nbits_in_range = 0;
 
-	if (bparser == NULL || bit == NULL || max_bits == 0) {
+	if (max_bits == 0) {
 		return M_FALSE;
 	}
 
 	/* Read first bit in range. If no bits remain in the parser, return false. */
-	if (!peek_next_bit(bparser, bit)) {
+	if (!M_bit_parser_peek_bit(bparser, bit)) {
 		return M_FALSE;
 	}
 
@@ -349,7 +507,7 @@ M_bool M_bit_parser_read_range(M_bit_parser_t *bparser, M_uint8 *bit, size_t *nb
 	do {
 		(*nbits_in_range)++;
 		bparser->offset++;
-	} while ((*nbits_in_range) < max_bits && peek_next_bit(bparser, &next_bit) && next_bit == *bit);
+	} while ((*nbits_in_range) < max_bits && M_bit_parser_peek_bit(bparser, &next_bit) && next_bit == *bit);
 
 	return M_TRUE;
 }

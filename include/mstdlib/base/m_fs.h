@@ -477,6 +477,13 @@ M_API void M_fs_perms_destroy(M_fs_perms_t *perms) M_FREE(1);
 
 /*! Can the process access the path with the given perms.
  *
+ * \warning using this function incorrectly can lead to security issues. This is an
+ * implementation of the POSIX access() function and the security considerations
+ * apply.
+ *
+ * This function should not be used to make access control decisions due to
+ * Time-of-check Time-of-use (TOCTOU) race condition attacks.
+ *
  * \param[in] path The path to access.
  * \param[in] mode M_fs_file_mode_t permissions to should be checked. Optional, pass
  *                 0 if only checking if the path exists.
@@ -498,6 +505,18 @@ M_API M_fs_error_t M_fs_perms_can_access(const char *path, M_uint32 mode);
  * \return Result.
  */
 M_API M_fs_error_t M_fs_perms_set_perms(const M_fs_perms_t *perms, const char *path);
+
+
+/*! Apply perms to open file.
+ *
+ * This will set/change/modify the perms on a file.
+ *
+ * \param[in] perms The perms.
+ * \param[in] fd    The file.
+ *
+ * \return Result.
+ */
+M_API M_fs_error_t M_fs_perms_set_perms_file(const M_fs_perms_t *perms, M_fs_file_t *fd);
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -953,6 +972,19 @@ M_API M_fs_error_t M_fs_path_norm(char **out, const char *path, M_uint32 flags, 
 M_API M_fs_error_t M_fs_info(M_fs_info_t **info, const char *path, M_uint32 flags);
 
 
+/*! Get information about an open file.
+ *
+ * \param[out] info Allocated info object with the info about the path. If passed as NULL then
+ *                  this only verifies that a path exists. However, the file is already open
+ *                  so it exists!
+ * \param[in] fd    The file.
+ * \param[in] flags M_fs_info_flags_t defining behavior of how and what info to read.
+ *
+ * \return Result.
+ */
+M_API M_fs_error_t M_fs_info_file(M_fs_info_t **info, M_fs_file_t *fd, M_uint32 flags);
+
+
 /*! Destroy an info object.
  *
  * \param[in] info The info object.
@@ -1069,6 +1101,7 @@ M_API const M_fs_perms_t *M_fs_info_get_perms(const M_fs_info_t *info);
 /*! Open a file.
  *
  * The set of flags you pass to \a mode must include M_FS_FILE_MODE_READ and/or M_FS_FILE_MODE_WRITE.
+ * System umask is honored when creating a file.
  *
  * The other M_fs_file_mode_t flags can be used as well, they just need to be OR'd with M_FS_FILE_MODE_READ and/or
  * M_FS_FILE_MODE_WRITE.
@@ -1078,7 +1111,8 @@ M_API const M_fs_perms_t *M_fs_info_get_perms(const M_fs_info_t *info);
  * \param[in]  buf_size Set a buffer size to enable buffered read and write. Use 0 to disable buffering.
  * \param[in]  mode     M_fs_file_mode_t open mode.
  * \param[in]  perms    Additional perms to apply to the file if it does not exist and is created.
-                        If perms is NULL a default perms of rw-rw-r-- & ~umask is used.
+                        Umake is honored when perms are set. E.g. perms & ~umask is used.
+                        If perms is NULL a default of rw-rw-r-- & ~umask is used.
  *
  * \return Result.
  */
