@@ -161,7 +161,6 @@ dnl functions
 AC_CHECK_FUNCS([strcasecmp strncasecmp])
 AC_CHECK_FUNCS([localtime_r])
 AC_CHECK_FUNCS([getpwuid_r getpwnam_r getgrgid_r getgrnam_r])
-AC_CHECK_FUNCS([readdir_r])
 AC_CHECK_FUNCS([secure_getenv])
 AC_CHECK_FUNCS([inet_pton inet_ntop sigtimedwait sigwait])
 
@@ -618,84 +617,6 @@ elif test "$pwnam" = "1" ; then
 elif test "$pwnam" = "0" ; then
   AC_DEFINE([HAVE_GETPWNAM_0], 1, [getpwnam does not exist])
   AC_SUBST(HAVE_GETPWNAM_0)
-fi
-
-dnl -------------------- CHECKING FOR readdir_r() -----------------------
-
-readdir="0"
-dnl point to this is to first verify getpwuid_r exists, then
-dnl in a multi-tiered fashion, check for which implementation exists.
-AC_CHECK_FUNC(getpwuid_r, [
-	AC_TRY_COMPILE([
-				#include <dirent.h>
-				#include <stddef.h>
-				#include <stdlib.h>
-				#include <string.h>
-				#include <sys/types.h>
-	], [
-					DIR           *dir;
-					struct dirent *entry;
-					struct dirent *result;
-					size_t         len;
-					len   = offsetof(struct dirent, d_name) + 16385;
-					entry = malloc(len);
-					memset(entry, 0, len);
-					dir = opendir(".");
-					(void)readdir_r(dir, entry, &result);
-					free(entry);
-					closedir(dir);
-	], readdir="3",
-	[
-		AC_TRY_COMPILE([
-				#include <dirent.h>
-				#include <stddef.h>
-				#include <stdlib.h>
-				#include <string.h>
-				#include <sys/types.h>
-		], [
-					DIR           *dir;
-					struct dirent *entry;
-					size_t         len;
-					len   = offsetof(struct dirent, d_name) + 16385;
-					entry = malloc(len);
-					memset(entry, 0, len);
-					dir = opendir(".");
-					(void)readdir_r(dir, entry);
-					free(entry);
-					closedir(dir);
-		], readdir="2"
-		)
-	]
-	)
-], readdir="0")
-
-if test "$readdir" = "0" ; then
-AC_CHECK_FUNC(getpwuid, [
-                AC_TRY_COMPILE([
-				#include <dirent.h>
-				#include <sys/types.h>
-                ], [
-					DIR           *dir;
-					dir = opendir(".");
-					(void)readdir(dir);
-					closedir(dir);
-                ], readdir="1", readdir="0")
-        ], readdir="1", [ readdir="0" ]
-)
-fi
-
-if test "$readdir" = "3" ; then
-  AC_DEFINE([HAVE_READDIR_3], 1, [readdir_r takes 3 args])
-  AC_SUBST(HAVE_READDIR_3)
-elif test "$readdir" = "2" ; then
-  AC_DEFINE([HAVE_READDIR_2], 1, [readdir_r takes 2 args])
-  AC_SUBST(HAVE_READDIR_2)
-elif test "$readdir" = "1" ; then
-  AC_DEFINE([HAVE_READDIR_1], 1, [readdir takes 1 arg])
-  AC_SUBST(HAVE_READDIR_1)
-elif test "$readdir" = "0" ; then
-  AC_DEFINE([HAVE_READDIR_0], 1, [readdir does not exist])
-  AC_SUBST(HAVE_READDIR_0)
 fi
 
 

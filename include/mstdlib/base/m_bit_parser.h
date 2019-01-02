@@ -133,6 +133,33 @@ M_API M_bit_parser_t *M_bit_parser_create_const(const void *bytes, size_t nbits)
 M_API void M_bit_parser_append(M_bit_parser_t *bparser, const void *bytes, size_t nbits);
 
 
+/*! Append bits from a given integer to a bit parser object.
+ *
+ * Note that the bit region being read is assumed to be justified against the least-significant end of the
+ * integer, though the bits within that region are read from most-significant to least-significant.
+ *
+ * For example, if bits == 0x8B == (10001011)b, and nbits == 4, the bits "1011" will be added to the buffer.
+ *
+ * \param[in] bparser bit parser object
+ * \param[in] bits    value to draw bits from
+ * \param[in] nbits   number of bits to use (counted from least-significant end, right-to-left)
+ */
+M_API void M_bit_parser_append_uint(M_bit_parser_t *bparser, M_uint64 bits, size_t nbits);
+
+
+/*! Append bits from a given binary-ascii string to the buffer.
+ *
+ * A binary-ascii string is a list of 1 and 0 characters (e.g., "100010").
+ *
+ * Any whitespace in the string will be silently ignored. So, " 1000 1 0" will add the same data as "100010".
+ *
+ * \param[in] bparser bit parser object
+ * \param[in] bitstr  string to draw bits from
+ * \return            M_FALSE on error (given bitstr had characters other than '0', '1' or whitespace)
+ */
+M_API M_bool M_bit_parser_append_bitstr(M_bit_parser_t *bparser, const char *bitstr);
+
+
 /*! Reset parser to use new data (copies input data).
  *
  * Parser state (including any mark) is reset to initial values. Any data that was in the parser before this
@@ -169,6 +196,18 @@ M_API size_t M_bit_parser_len(M_bit_parser_t *bparser);
  * \return            current parser position, relative to start of data (in bits)
  */
 M_API size_t M_bit_parser_current_offset(M_bit_parser_t *bparser);
+
+
+/*! Count the number of bits left in the parser that have the given value.
+ *
+ * If the remaining bits in the parser are "10011110", calling this function
+ * with bit=0 will return 3, and calling it with bit=1 will return 5.
+ *
+ * \param[in] bparser bit parser object
+ * \param[in] bit     bit value to count
+ * \return            number of bits left in parser with the given value
+ */
+M_API size_t M_bit_parser_count(M_bit_parser_t *bparser, M_uint8 bit);
 
 
 /*! Rewind parser (and any mark) back to start of data.
@@ -339,20 +378,6 @@ M_API M_bool M_bit_parser_read_uint(M_bit_parser_t *bparser, size_t nbits, M_uin
 M_API M_bool M_bit_parser_read_int(M_bit_parser_t *bparser, size_t nbits, M_bit_parser_int_format_t fmt, M_int64 *res);
 
 
-/*! Skip bits until we hit a bit different than the current one.
- *
- * For example, if the parser contains "11100001", calling this function will move the parser's position
- * to the first \a 0.
- *
- * Note that this function will always consume at least one bit, if any bits are left to skip.
- *
- * \param[in]  bparser  bit parser to read bits from
- * \param[in]  max_bits maximum number of bits to skip (if set to zero, no bits will be skipped)
- * \return              M_TRUE if at least one bit was skipped, M_FALSE if no bits are left or \a max_bits was zero
- */
-M_API M_bool M_bit_parser_consume_range(M_bit_parser_t *bparser, size_t max_bits);
-
-
 /*! Read bits until we hit a bit different than the current one.
  *
  * For example, if the parser contain "11100001", calling this function will move the parser's position
@@ -367,6 +392,50 @@ M_API M_bool M_bit_parser_consume_range(M_bit_parser_t *bparser, size_t max_bits
  * \return                    M_TRUE if at least one bit was read, M_FALSE if no bits are left or \a max_bits was zero
  */
 M_API M_bool M_bit_parser_read_range(M_bit_parser_t *bparser, M_uint8 *bit, size_t *nbits_in_range, size_t max_bits);
+
+
+/*! Skip bits until we hit a bit different than the current one.
+ *
+ * For example, if the parser contains "11100001", calling this function will move the parser's position
+ * to the first \a 0.
+ *
+ * Note that this function will always consume at least one bit, if any bits are left to skip.
+ *
+ * \param[in]  bparser  bit parser to read bits from
+ * \param[in]  max_bits maximum number of bits to skip (if set to zero, no bits will be skipped)
+ * \return              M_TRUE if at least one bit was skipped, M_FALSE if no bits are left or \a max_bits was zero
+ */
+M_API M_bool M_bit_parser_consume_range(M_bit_parser_t *bparser, size_t max_bits);
+
+
+/*! Consume bits up to and including the next bit with the given value.
+ *
+ * Usage example:
+ * \code{.c}
+ *     M_bit_parser_t *bparser;
+ *	   const M_uint8   bytes[] = {0x86, 0x00};
+ *
+ *     bparser = M_bit_parser_create_const(bytes, 10);
+ *     // bparser contains: "1000011000"
+ *
+ *     // Now, let's say we want to print the index of every set bit.
+ *     while (M_bit_parser_consume_to_next(bparser, 1, M_bit_parser_len(bparser)) {
+ *         M_printf("set bit: %zu\n", M_bit_parser_current_offset(bparser) - 1);
+ *     }
+ *
+ *     // Loop will print:
+ *     //   set bit: 0
+ *     //   set bit: 5
+ *     //   set bit: 6
+ *     // After loop, bparser will be empty.
+ * \endcode
+ *
+ * \param[in] bparser  bit parser to read bits from
+ * \param[in] bit      bit value that we're looking for
+ * \param[in] max_bits maximum number of bits to consume (if set to zero, no bits will be consumed)
+ * \return             M_TRUE if we found and consumed a matching bit, M_FALSE otherwise.
+ */
+M_API M_bool M_bit_parser_consume_to_next(M_bit_parser_t *bparser, M_uint8 bit, size_t max_bits);
 
 /*! @} */
 

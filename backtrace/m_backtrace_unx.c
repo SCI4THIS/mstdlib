@@ -34,16 +34,15 @@
 
 static void nonfatal_sighandler(int sig)
 {
-	if (M_backtrace_cbs.got_nonfatal == NULL) {
-		signal(sig, SIG_IGN);
-	} else {
+	if (M_backtrace_cbs.got_nonfatal != NULL) {
 		M_backtrace_cbs.got_nonfatal(sig);
 	}
 }
 
 static void ignore_sighandler(int sig)
 {
-	signal(sig, SIG_IGN);
+	(void)sig;
+	/* no op. */
 }
 
 static void fatal_sighandler(int sig)
@@ -89,7 +88,9 @@ static void fatal_sighandler(int sig)
 		for (i=0; i<nbufptrs; i++) {
 			M_backtrace_cbs.trace_data((unsigned char *)lines[i], M_str_len(lines[i]));
 		}
+		M_BEGIN_IGNORE_DEPRECATIONS
 		free(lines);
+		M_END_IGNORE_DEPRECATIONS
 	}
 #endif
 
@@ -108,6 +109,9 @@ static void fatal_sighandler(int sig)
 			break;
 		case SIGBUS:
 			message = "Bus Error";
+			break;
+		case SIGABRT:
+			message = "Abort";
 			break;
 		default:
 			M_snprintf(temp, sizeof(temp), "Unknown fatal error: Signal %d", sig);
@@ -142,7 +146,9 @@ M_bool M_backtrace_setup_handling(M_backtrace_type_t type)
 		M_backtrace_set_nonfatal_signal(SIGINT);
 		M_backtrace_set_nonfatal_signal(SIGQUIT);
 		M_backtrace_set_nonfatal_signal(SIGTERM);
+#ifdef SIGXFSZ
 		M_backtrace_set_nonfatal_signal(SIGXFSZ);
+#endif
 	}
 
 	/* Setup default fatal signals. */
@@ -151,6 +157,7 @@ M_bool M_backtrace_setup_handling(M_backtrace_type_t type)
 	M_backtrace_set_fatal_signal(SIGBUS);
 	M_backtrace_set_fatal_signal(SIGILL);
 	M_backtrace_set_fatal_signal(SIGFPE);
+	M_backtrace_set_fatal_signal(SIGABRT);
 
 	return M_TRUE;
 }

@@ -5,7 +5,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMakeModules/")
 include(DefaultBuildType)
 
 project(Mstdlib
-	VERSION   1.2.0
+	VERSION   1.4.0
 	LANGUAGES C
 )
 
@@ -47,21 +47,20 @@ else ()
 	set(valgrind_default TRUE)
 endif ()
 
-option(MSTDLIB_STATIC          "Build as a static library"                              FALSE)
-option(MSTDLIB_STATIC_PIC      "Build the static library as PIC (position independent)" FALSE)
-option(MSTDLIB_INSTALL_HEADERS "Install headers"                                        TRUE)
-option(MSTDLIB_INSTALL_LIBS    "Install libraries"                                      TRUE)
-option(MSTDLIB_INSTALL_EXPORTS "Install export file"                                    ${MSTDLIB_INSTALL_HEADERS})
-option(MSTDLIB_BUILD_TESTS     "Build tests"                                            TRUE)
-option(MSTDLIB_BUILD_DOCS      "Build doxygen docs"                                     TRUE)
-option(MSTDLIB_USE_VALGRIND    "Run tests with valgrind when running 'make check'"      ${valgrind_default})
-option(MSTDLIB_BUILD_BACKTRACE "Build backtrace module"                                 TRUE)
-option(MSTDLIB_BUILD_FORMATS   "Build formats module"                                   TRUE)
-option(MSTDLIB_BUILD_THREAD    "Build thread module"                                    TRUE)
-option(MSTDLIB_BUILD_IO        "Build io module"                                        TRUE)
-option(MSTDLIB_BUILD_TLS       "Build tls module"                                       TRUE)
-option(MSTDLIB_BUILD_LOG       "Build log module"                                       TRUE)
-option(MSTDLIB_BUILD_SQL       "Build sql module"                                       TRUE)
+option(MSTDLIB_STATIC          "Build as a static library"                         FALSE)
+option(MSTDLIB_INSTALL_HEADERS "Install headers"                                   TRUE)
+option(MSTDLIB_INSTALL_LIBS    "Install libraries"                                 TRUE)
+option(MSTDLIB_INSTALL_EXPORTS "Install export file"                               ${MSTDLIB_INSTALL_HEADERS})
+option(MSTDLIB_BUILD_TESTS     "Build tests"                                       TRUE)
+option(MSTDLIB_BUILD_DOCS      "Build doxygen docs"                                TRUE)
+option(MSTDLIB_USE_VALGRIND    "Run tests with valgrind when running 'make check'" ${valgrind_default})
+option(MSTDLIB_BUILD_BACKTRACE "Build backtrace module"                            TRUE)
+option(MSTDLIB_BUILD_FORMATS   "Build formats module"                              TRUE)
+option(MSTDLIB_BUILD_THREAD    "Build thread module"                               TRUE)
+option(MSTDLIB_BUILD_IO        "Build io module"                                   TRUE)
+option(MSTDLIB_BUILD_TLS       "Build tls module"                                  TRUE)
+option(MSTDLIB_BUILD_LOG       "Build log module"                                  TRUE)
+option(MSTDLIB_BUILD_SQL       "Build sql module"                                  TRUE)
 
 mark_as_advanced(FORCE MSTDLIB_INSTALL_EXPORTS)
 
@@ -259,7 +258,6 @@ include(CheckHasGetGRGID)
 include(CheckHasGetGRNAM)
 include(CheckHasBirthTime)
 include(CheckHasVaCopy)
-include(ReadDir)
 
 if (NOT ANDROID)
 	include(LargeFiles)
@@ -498,9 +496,9 @@ endif ()
 # Tests need to check for the test frame work so it will handle enabled/disable itself.
 add_subdirectory(test)
 
-# Trick to make headers and scripts show up in IDEs. Adds a phony target that references the files.
-file(GLOB_RECURSE headers_and_scripts *.h *.lua *.yml)
-add_custom_target(_mstdlib_root_extra_files ALL SOURCES ${headers_and_scripts})
+# Trick to make scripts show up in IDEs. Adds a phony target that references the files.
+file(GLOB_RECURSE scripts *.lua *.yml)
+add_custom_target(_mstdlib_root_extra_files ALL SOURCES ${scripts})
 
 
 if (MSTDLIB_INSTALL_EXPORTS)
