@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -25,6 +25,10 @@
 #define __M_TIME_INT_H__
 
 #include "platform/m_platform.h"
+
+#ifdef HAVE_SYS_TIME_H
+#  include <sys/time.h>
+#endif
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 

@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -139,6 +139,12 @@ size_t M_hash_stridx_get_direct(const M_hash_stridx_t *h, const char *key)
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+M_bool M_hash_stridx_is_multi(const M_hash_stridx_t *h)
+{
+	return M_hashtable_is_multi((const M_hashtable_t *)h);
+}
+
 
 M_bool M_hash_stridx_multi_len(const M_hash_stridx_t *h, const char *key, size_t *len)
 {

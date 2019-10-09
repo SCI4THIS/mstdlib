@@ -63,7 +63,7 @@ endif ()
 if (BUILDCHECK)
 	file(REMOVE_RECURSE "${bindir}/thirdparty/check")
 	file(REMOVE_RECURSE "${bindir}/thirdparty/check_src")
-	execute_process(COMMAND "${GIT}" clone https://github.com/libcheck/check.git --depth 1 "${bindir}/thirdparty/check_src"
+	execute_process(COMMAND "${GIT}" clone --branch 0.12.0 https://github.com/libcheck/check.git --depth 1 "${bindir}/thirdparty/check_src"
 		RESULT_VARIABLE res
 	)
 	if (NOT res EQUAL 0)
@@ -119,13 +119,13 @@ endif ()
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # SQLite Amalgamation
 file(REMOVE_RECURSE "${srcdir}/thirdparty/sqlite-amalgamation")
-set(sqlite_name sqlite-amalgamation-3230100)
+set(sqlite_name sqlite-amalgamation-3290000)
 message("Downloading and extracting ${sqlite_name}.zip into ${src_dir}/thirdparty/sqlite-amalgamation ...")
-file(DOWNLOAD https://sqlite.org/2018/${sqlite_name}.zip
+file(DOWNLOAD https://sqlite.org/2019/${sqlite_name}.zip
 	"${srcdir}/thirdparty/${sqlite_name}.zip"
 	INACTIVITY_TIMEOUT 5
 	TIMEOUT 40
-	EXPECTED_HASH SHA1=98729f2c2d57d166e3d6d9862744c1d66388e286
+	EXPECTED_HASH SHA1=a0eba79e5d1627946aead47e100a8a6f9f6fafff
 	STATUS res
 )
 if (NOT res MATCHES "^0;")

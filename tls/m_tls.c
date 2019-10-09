@@ -1,17 +1,17 @@
 /* The MIT License (MIT)
- * 
- * Copyright (c) 2017 Main Street Softworks, Inc.
- * 
+ *
+ * Copyright (c) 2017 Monetra Technologies, LLC.
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -39,6 +39,10 @@
 #include "m_tls_serverctx_int.h"
 #include "m_tls_hostvalidate.h"
 
+/* If this is defined, writes will be buffered rather than written directly to the underlying io object */
+//#define TLS_BUFFER_WRITES
+
+
 typedef enum {
 	M_TLS_STATE_INIT         = 0,
 	M_TLS_STATE_CONNECTING   = 1,
@@ -61,6 +65,9 @@ struct M_io_handle {
 	char              *hostname;
 	SSL               *ssl;
 	BIO               *bio_glue;
+#ifdef TLS_BUFFER_WRITES
+	M_buf_t           *write_buf;
+#endif
 	M_tls_state_t      state;
 	M_tls_stateflags_t state_flags;
 	M_bool             is_client;
@@ -74,6 +81,26 @@ struct M_io_handle {
 
 static M_tls_init_t       M_tls_initialized       = 0;
 static BIO_METHOD        *M_tls_bio_method        = NULL;
+
+/* Compatibility functions */
+#if OPENSSL_VERSION_NUMBER < 0x1010000fL || defined(LIBRESSL_VERSION_NUMBER)
+static int SSL_has_pending(const SSL *s)
+{
+	(void)s;
+	return 0;
+}
+
+static void BIO_set_shutdown(BIO *a, int shut)
+{
+	a->shutdown = shut;
+}
+
+static int BIO_get_shutdown(BIO *a)
+{
+	return a->shutdown;
+}
+#endif
+
 
 static void M_tls_bio_method_new(void);
 
@@ -156,8 +183,12 @@ M_thread_once_t M_tls_init_once = M_THREAD_ONCE_STATIC_INITIALIZER;
 
 static void M_tls_destroy(void *arg)
 {
+#if OPENSSL_VERSION_NUMBER < 0x1010000fL || defined(LIBRESSL_VERSION_NUMBER)
 	size_t i;
+#endif
+
 	(void)arg;
+
 	if (!M_thread_once_reset(&M_tls_init_once) || M_tls_initialized == M_TLS_INIT_EXTERNAL || M_tls_initialized == 0) {
 		M_tls_initialized = 0;
 		return;
@@ -213,7 +244,9 @@ static unsigned long M_tls_crypto_threadid_cb(void)
 static void M_tls_init_routine(M_uint64 flags)
 {
 	M_tls_init_t type = (M_tls_init_t)flags;
+#if OPENSSL_VERSION_NUMBER < 0x1010000fL || defined(LIBRESSL_VERSION_NUMBER)
 	size_t       i;
+#endif
 
 	M_tls_initialized = type;
 
@@ -270,18 +303,66 @@ static void M_tls_op_timeout_cb(M_event_t *event, M_event_type_t type, M_io_t *i
 		M_snprintf(handle->error, sizeof(handle->error), "TLS %s timeout negotiating connection", (handle->state == M_TLS_STATE_CONNECTING)?"client":"server");
 		handle->state            = M_TLS_STATE_ERROR;
 		handle->negotiation_time = M_time_elapsed(&handle->negotiation_start);
-		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_ERROR);
+		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_ERROR, M_IO_ERROR_WOULDBLOCK);
 		return;
 	}
 
 	if (handle->state == M_TLS_STATE_SHUTDOWN) {
 		/* Ignore error */
 		handle->state = M_TLS_STATE_DISCONNECTED;
-		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_DISCONNECTED);
+		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_DISCONNECTED, M_IO_ERROR_DISCONNECT);
 		return;
 	}
 
 }
+
+/*! Flush the write buffer to the underlying IO object.
+ *
+ *  We are buffering all writes to try to aggregate multiple writes into larger
+ *  chunks and also to work around possible issues with WANT_WRITE style
+ *  retries.
+ *
+ *  This function must be called after any of these functions:
+ *   - SSL_connect()
+ *   - SSL_accept()
+ *   - SSL_shutdown()
+ *   - SSL_read()
+ *   - SSL_write()
+ */
+static void M_io_tls_flush_write_buf(M_io_layer_t *layer)
+{
+#ifdef TLS_BUFFER_WRITES
+	M_io_handle_t *handle = M_io_layer_get_handle(layer);
+	M_io_error_t   err;
+	size_t         write_len;
+
+	if (M_buf_len(handle->write_buf) == 0)
+		return;
+
+	write_len           = M_buf_len(handle->write_buf);
+	err                 = M_io_layer_write(M_io_layer_get_io(layer), M_io_layer_get_index(layer)-1, (const unsigned char *)M_buf_peek(handle->write_buf), &write_len, NULL);
+	handle->last_io_err = err;
+
+	if (err != M_IO_ERROR_SUCCESS) {
+//M_printf("%s(): %p write flush failed\n", __FUNCTION__, layer);
+		return;
+	}
+	if (write_len == M_buf_len(handle->write_buf)) {
+
+	} else {
+//		M_printf("%s(): %p flushed %zu bytes of %zu\n", __FUNCTION__, layer, write_len, M_buf_len(handle->write_buf));
+	}
+	M_buf_drop(handle->write_buf, write_len);
+
+	/* If the entire buffer flushed, notify we can write more */
+	if (M_buf_len(handle->write_buf) == 0) {
+		M_io_layer_softevent_add(layer, M_FALSE, M_EVENT_TYPE_WRITE, M_IO_ERROR_SUCCESS);
+	}
+#else
+	(void)layer;
+#endif
+}
+
 
 static M_bool M_io_tls_process_state_init(M_io_layer_t *layer, M_event_type_t *type)
 {
@@ -382,6 +463,12 @@ static M_bool M_io_tls_process_state_connecting(M_io_layer_t *layer, M_event_typ
 				M_event_timer_remove(handle->timer);
 				handle->timer            = NULL;
 				handle->negotiation_time = M_time_elapsed(&handle->negotiation_start);
+				M_io_tls_flush_write_buf(layer);
+
+				/* If there is data that has been buffered but not processed, trigger a read event.
+				 * NOTE: Just *assume* there might be data, do NOT rely on SSL_pending() or SSL_has_pending()
+				 *       to tell you this! */
+				M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_READ, M_IO_ERROR_SUCCESS);
 
 				return M_FALSE; /* Not consumed, relay rewritten connect message */
 
@@ -389,10 +476,13 @@ cert_err:
 				handle->state            = M_TLS_STATE_ERROR;
 				*type                    = M_EVENT_TYPE_ERROR;
 				handle->negotiation_time = M_time_elapsed(&handle->negotiation_start);
+				M_io_set_error(M_io_layer_get_io(layer), M_IO_ERROR_BADCERTIFICATE);
 				return M_FALSE; /* Not consumed, relay rewritten error message */
 			}
 			err = SSL_get_error(handle->ssl, rv);
 			if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+				M_io_tls_flush_write_buf(layer);
+
 //M_printf("SSL_connect() WANT_%s\n", err == SSL_ERROR_WANT_READ?"READ":"WRITE");
 				return M_TRUE; /* Internally consumed i/o */
 			}
@@ -436,10 +526,19 @@ static M_bool M_io_tls_process_state_accepting(M_io_layer_t *layer, M_event_type
 				handle->timer            = NULL;
 				handle->negotiation_time = M_time_elapsed(&handle->negotiation_start);
 
+				M_io_tls_flush_write_buf(layer);
+
+				/* If there is data that has been buffered but not processed, trigger a read event.
+				 * NOTE: Just *assume* there might be data, do NOT rely on SSL_pending() or SSL_has_pending()
+				 *       to tell you this! */
+				M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_READ, M_IO_ERROR_SUCCESS);
+
 				return M_FALSE; /* Not consumed, relay rewritten connect message */
 			}
 			err = SSL_get_error(handle->ssl, rv);
 			if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+				M_io_tls_flush_write_buf(layer);
+
 //M_printf("SSL_accept(%p) WANT_%s\n", M_io_layer_get_io(layer), err == SSL_ERROR_WANT_READ?"READ":"WRITE");
 				return M_TRUE; /* Internally consumed i/o */
 			}
@@ -484,16 +583,27 @@ static M_bool M_io_tls_process_state_connected(M_io_layer_t *layer, M_event_type
 				 * immediately as a higher priority, but still trigger a "read" event
 				 * too as a secondary event in case we're also waiting on this */
 				*type = M_EVENT_TYPE_WRITE;
-				M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_READ);
+
+				/* Clear flag since we're delivering event */
+				handle->state_flags &= (M_tls_stateflags_t)~(M_TLS_STATEFLAG_WRITE_WANT_READ);
+
+				M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_READ, M_IO_ERROR_SUCCESS);
 			}
 			return M_FALSE;
 		case M_EVENT_TYPE_WRITE:
+			/* Flush write buffer */
+			M_io_tls_flush_write_buf(layer);
+
 			if (handle->state_flags & M_TLS_STATEFLAG_READ_WANT_WRITE) {
 				/* Prefer rewriting this event to a "read" which will get processed
 				 * immediately as a higher priority, but still trigger a "write" event
 				 * too as a secondary event in case we're also waiting on this */
 				*type = M_EVENT_TYPE_READ;
-				M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_WRITE);
+
+				/* Clear flag since we're delivering event */
+				handle->state_flags &= (M_tls_stateflags_t)~(M_TLS_STATEFLAG_READ_WANT_WRITE);
+
+				M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_WRITE, M_IO_ERROR_SUCCESS);
 			}
 			return M_FALSE;
 		default:
@@ -526,6 +636,8 @@ static M_bool M_io_tls_process_state_shutdown(M_io_layer_t *layer, M_event_type_
 			}
 			err = SSL_get_error(handle->ssl, rv);
 			if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_SYSCALL) {
+				M_io_tls_flush_write_buf(layer);
+
 //M_printf("SSL_shutdown() WANT_%s\n", err == SSL_ERROR_WANT_READ?"READ":((err == SSL_ERROR_WANT_WRITE)?"WRITE":"SYSCALL"));
 				return M_TRUE; /* Internally consumed i/o */
 			}
@@ -554,6 +666,7 @@ static M_bool M_io_tls_process_cb(M_io_layer_t *layer, M_event_type_t *type)
 	M_bool         consumed = M_FALSE;
 
 //M_printf("%s(): entering %p event %d state %d\n", __FUNCTION__, M_io_layer_get_io(layer), (int)*type, (int)handle->state);
+
 	/* NOTE: This is not a switch statement as a state transition could occur that requires
 	 *       processing.  It is ordered in the way state transitions can occur */
 	if (!consumed && handle->state == M_TLS_STATE_INIT) {
@@ -629,6 +742,13 @@ static int M_tls_bio_read(BIO *b, char *buf, int len)
 	if (buf == NULL || len <= 0 || layer == NULL)
 		return 0;
 
+	/* Report cached error conditions appropriately */
+	if (handle->last_io_err == M_IO_ERROR_DISCONNECT) {
+		return 0;
+	} else if (handle->last_io_err != M_IO_ERROR_SUCCESS && handle->last_io_err != M_IO_ERROR_WOULDBLOCK) {
+		return -1;
+	}
+
 	read_len = (size_t)len;
 	err      = M_io_layer_read(M_io_layer_get_io(layer), M_io_layer_get_index(layer)-1, (unsigned char *)buf, &read_len, NULL);
 	handle->last_io_err = err;
@@ -652,27 +772,46 @@ static int M_tls_bio_read(BIO *b, char *buf, int len)
 static int M_tls_bio_write(BIO *b, const char *buf, int len)
 {
 #if OPENSSL_VERSION_NUMBER >= 0x1010000fL && !defined(LIBRESSL_VERSION_NUMBER)
-	M_io_layer_t  *layer = BIO_get_data(b);
+	M_io_layer_t  *layer     = BIO_get_data(b);
 #else
-	M_io_layer_t  *layer = b->ptr;
+	M_io_layer_t  *layer     = b->ptr;
 #endif
-	M_io_error_t   err;
-	M_io_handle_t *handle = M_io_layer_get_handle(layer);
+	M_io_handle_t *handle    = M_io_layer_get_handle(layer);
 	size_t         write_len;
 
 	if (buf == NULL || len <= 0 || layer == NULL)
 		return 0;
 
-	write_len = (size_t)len;
-	err       = M_io_layer_write(M_io_layer_get_io(layer), M_io_layer_get_index(layer)-1, (const unsigned char *)buf, &write_len, NULL);
-	handle->last_io_err = err;
-	BIO_clear_retry_flags(b);
+	/* Report cached error conditions appropriately */
+	if (handle->last_io_err == M_IO_ERROR_DISCONNECT) {
+		return 0;
+	} else if (handle->last_io_err != M_IO_ERROR_SUCCESS && handle->last_io_err != M_IO_ERROR_WOULDBLOCK) {
+		return -1;
+	}
 
-	if (err != M_IO_ERROR_SUCCESS) {
-		if (err == M_IO_ERROR_WOULDBLOCK) {
+#ifdef TLS_BUFFER_WRITES
+	write_len  = 2 * 1024 * 1024; /* 2MB buffer */
+	write_len -= M_buf_len(handle->write_buf);
+	if (write_len == 0) {
+		BIO_set_retry_write(b);
+		return -1;
+	}
+
+	if ((size_t)len < write_len)
+		write_len = (size_t)len;
+
+	M_buf_add_bytes(handle->write_buf, buf, (size_t)write_len);
+
+	return (int)write_len;
+#else
+	write_len           = (size_t)len;
+	handle->last_io_err = M_io_layer_write(M_io_layer_get_io(layer), M_io_layer_get_index(layer)-1, (const unsigned char *)buf, &write_len, NULL);
+
+	if (handle->last_io_err != M_IO_ERROR_SUCCESS) {
+		if (handle->last_io_err == M_IO_ERROR_WOULDBLOCK) {
 			BIO_set_retry_write(b);
 			return -1;
-		} else if (err == M_IO_ERROR_DISCONNECT) {
+		} else if (handle->last_io_err == M_IO_ERROR_DISCONNECT) {
 			return 0;
 		}
 		/* Error */
@@ -680,6 +819,7 @@ static int M_tls_bio_write(BIO *b, const char *buf, int len)
 	}
 
 	return (int)write_len;
+#endif
 }
 
 
@@ -689,6 +829,12 @@ static long M_tls_bio_ctrl(BIO *b, int cmd, long num, void *ptr)
 	(void)num;
 	(void)ptr;
 	switch (cmd) {
+		case BIO_CTRL_GET_CLOSE:
+			return (long)BIO_get_shutdown(b);
+		case BIO_CTRL_SET_CLOSE:
+			BIO_set_shutdown(b, (int)num);
+			return 1;
+		case BIO_CTRL_DUP:
 		case BIO_CTRL_FLUSH:
 			/* Required internally by OpenSSL, no-op though */
 			return 1;
@@ -783,13 +929,17 @@ static M_io_error_t M_io_tls_read_cb(M_io_layer_t *layer, unsigned char *buf, si
 
 		*read_len += (size_t)rv;
 
-		if (request_len == *read_len)
+		if (request_len == *read_len) {
+			M_io_tls_flush_write_buf(layer);
 			return M_IO_ERROR_SUCCESS;
+		}
 	}
 
 	ioerr = M_IO_ERROR_ERROR;
 	err   = SSL_get_error(handle->ssl, rv);
 	if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+		M_io_tls_flush_write_buf(layer);
+
 		if (err == SSL_ERROR_WANT_WRITE)
 			handle->state_flags |= M_TLS_STATEFLAG_READ_WANT_WRITE;
 
@@ -810,7 +960,7 @@ static M_io_error_t M_io_tls_read_cb(M_io_layer_t *layer, unsigned char *buf, si
 	if (*read_len != 0) {
 		/* Send signal if we obscured a critical error */
 		if (ioerr != M_IO_ERROR_WOULDBLOCK) {
-			M_io_layer_softevent_add(layer, M_TRUE, ioerr == M_IO_ERROR_DISCONNECT?M_EVENT_TYPE_DISCONNECTED:M_EVENT_TYPE_ERROR);
+			M_io_layer_softevent_add(layer, M_TRUE, ioerr == M_IO_ERROR_DISCONNECT?M_EVENT_TYPE_DISCONNECTED:M_EVENT_TYPE_ERROR, ioerr);
 		}
 		ioerr = M_IO_ERROR_SUCCESS;
 	}
@@ -847,13 +997,19 @@ static M_io_error_t M_io_tls_write_cb(M_io_layer_t *layer, const unsigned char *
 
 		*write_len += (size_t)rv;
 
-		if (request_len == *write_len)
+		if (request_len == *write_len) {
+			/* Only write once all queued */
+			M_io_tls_flush_write_buf(layer);
 			return M_IO_ERROR_SUCCESS;
+		}
 	}
 
 	ioerr = M_IO_ERROR_ERROR;
 	err   = SSL_get_error(handle->ssl, rv);
 	if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+		/* If SSL_ERROR_WANT_READ, we might need to write bytes to get the read data */
+		M_io_tls_flush_write_buf(layer);
+
 		if (err == SSL_ERROR_WANT_READ)
 			handle->state_flags |= M_TLS_STATEFLAG_WRITE_WANT_READ;
 
@@ -874,7 +1030,7 @@ static M_io_error_t M_io_tls_write_cb(M_io_layer_t *layer, const unsigned char *
 	if (*write_len != 0) {
 		/* Send signal if we obscured a critical error */
 		if (ioerr != M_IO_ERROR_WOULDBLOCK) {
-			M_io_layer_softevent_add(layer, M_TRUE, ioerr == M_IO_ERROR_DISCONNECT?M_EVENT_TYPE_DISCONNECTED:M_EVENT_TYPE_ERROR);
+			M_io_layer_softevent_add(layer, M_TRUE, ioerr == M_IO_ERROR_DISCONNECT?M_EVENT_TYPE_DISCONNECTED:M_EVENT_TYPE_ERROR, ioerr);
 		}
 		ioerr = M_IO_ERROR_SUCCESS;
 	}
@@ -914,6 +1070,9 @@ static M_bool M_io_tls_disconnect_cb(M_io_layer_t *layer)
 		handle->state = M_TLS_STATE_DISCONNECTED;
 		return M_TRUE; /* Go to next layer, even though this is an error */
 	}
+
+	M_io_tls_flush_write_buf(layer);
+
 //M_printf("SSL_shutdown started\n");
 	/* Ok, we've initiated a disconnect sequence, start a timer so this can
 	 * be canceled if it takes too long */
@@ -921,6 +1080,42 @@ static M_bool M_io_tls_disconnect_cb(M_io_layer_t *layer)
 
 	/* Don't go to next layer, processing disconnect */
 	return M_FALSE;
+}
+
+
+static void M_io_tls_save_client_session(M_io_handle_t *handle, unsigned int port)
+{
+	char        *hostport = NULL;
+	SSL_SESSION *session;
+
+	if (!handle->is_client || M_str_isempty(handle->hostname) || !handle->clientctx->sessions_enabled)
+		return;
+
+	session = SSL_get1_session(handle->ssl);
+#if OPENSSL_VERSION_NUMBER >= 0x1010100fL && !defined(LIBRESSL_VERSION_NUMBER)
+	/* The TLSv1.3 spec recommends sessions are only reused once.
+	 *
+	 * If it's not resumable we won't store it because it's not useable.
+	 */
+	if (session != NULL &&
+			(!SSL_SESSION_is_resumable(session) ||
+				(SSL_session_reused(handle->ssl) && M_str_caseeq(SSL_get_version(handle->ssl), "TLSv1.3"))))
+	{
+		SSL_SESSION_free(session);
+		session = NULL;
+	}
+#endif
+
+
+	if (session != NULL) {
+		M_asprintf(&hostport, "%s:%u", handle->hostname, port);
+
+		M_thread_mutex_lock(handle->clientctx->lock);
+		M_hash_strvp_insert(handle->clientctx->sessions, hostport, session);
+		M_thread_mutex_unlock(handle->clientctx->lock);
+
+		M_free(hostport);
+	}
 }
 
 
@@ -938,23 +1133,20 @@ static M_bool M_io_tls_reset_cb(M_io_layer_t *layer)
 		SSL_set_shutdown(handle->ssl, SSL_SENT_SHUTDOWN|SSL_RECEIVED_SHUTDOWN);
 	}
 
-	/* If client connection, we have additional work to do to save the session */
-	if (handle->is_client && handle->clientctx->sessions_enabled) {
-		if (!M_str_isempty(handle->hostname)) {
-			char        *hostport = NULL;
-			SSL_SESSION *session;
-
-			M_asprintf(&hostport, "%s:%u", handle->hostname, (unsigned int)M_io_net_get_port(io));
-	
-			session = SSL_get1_session(handle->ssl);
-			if (session != NULL) {
-				M_thread_mutex_lock(handle->clientctx->lock);
-				M_hash_strvp_insert(handle->clientctx->sessions, hostport, session);
-				M_thread_mutex_unlock(handle->clientctx->lock);
-			}
-			M_free(hostport);
-		}
-	}
+	/* If client connection, we have additional work to do to save the session.
+	 *
+	 * OpenSSL supports a callback based system for receiving sessions that can
+	 * be stored but we're not using it. The callback method is necessary for
+	 * TLSv1.3 when attempting to store the session during negotiation. v1.3
+	 * will generate the session after the handshake has completed so unlike
+	 * <= v1.2 where there was a specific place during handshake it could be pulled
+	 * that's no longer possible.
+	 *
+	 * The above does not apply to us because we only store session at shutdown.
+	 * Saving sessions will work with v1.3 due to this. Making this code fully
+	 * support v1.3 sessions.
+	 */
+	M_io_tls_save_client_session(handle, (unsigned int)M_io_net_get_port(io));
 
 	if (handle->ssl != NULL) {
 		SSL_free(handle->ssl);
@@ -963,6 +1155,10 @@ static M_bool M_io_tls_reset_cb(M_io_layer_t *layer)
 	handle->ssl              = NULL;
 	/* SSL_free() auto-frees the bio BIO_free(handle->bio_glue); */
 	handle->bio_glue         = NULL;
+#ifdef TLS_BUFFER_WRITES
+	M_buf_cancel(handle->write_buf);
+	handle->write_buf        = NULL;
+#endif
 	M_event_timer_remove(handle->timer);
 	handle->timer            = NULL;
 	handle->state            = M_TLS_STATE_INIT;
@@ -1075,7 +1271,7 @@ M_io_error_t M_io_tls_client_add(M_io_t *io, M_tls_clientctx_t *ctx, const char 
 		session = M_hash_strvp_multi_get_direct(ctx->sessions, hostport, 0);
 		if (session) {
 			SSL_set_session(handle->ssl, session);
-			/* This will also reduce the reference count on thet session */
+			/* This will also reduce the reference count on that session */
 			M_hash_strvp_multi_remove(ctx->sessions, hostport, 0, M_TRUE);
 		}
 		M_thread_mutex_unlock(ctx->lock);
@@ -1108,6 +1304,10 @@ M_io_error_t M_io_tls_client_add(M_io_t *io, M_tls_clientctx_t *ctx, const char 
 	handle->bio_glue = M_tls_bio_new(layer);
 	SSL_set_bio(handle->ssl, handle->bio_glue, handle->bio_glue);
 
+#ifdef TLS_BUFFER_WRITES
+	handle->write_buf = M_buf_create();
+#endif
+
 	return M_IO_ERROR_SUCCESS;
 }
 
@@ -1135,12 +1335,16 @@ static M_io_error_t M_io_tls_accept_cb(M_io_t *io, M_io_layer_t *orig_layer)
 	handle->ssl         = SSL_new(handle->serverctx->ctx);
 
 	/* If DHE negotiation is enabled, set it up now */
-	if (handle->serverctx->dh) 
+	if (handle->serverctx->dh)
 		SSL_set_tmp_dh(handle->ssl, handle->serverctx->dh);
 
 	/* Set the layer as the 'thunk' data for the custom bio */
 	handle->bio_glue    = M_tls_bio_new(layer);
 	SSL_set_bio(handle->ssl, handle->bio_glue, handle->bio_glue);
+
+#ifdef TLS_BUFFER_WRITES
+	handle->write_buf   = M_buf_create();
+#endif
 
 	M_io_layer_release(layer);
 	return M_IO_ERROR_SUCCESS;
@@ -1190,7 +1394,7 @@ M_tls_protocols_t M_tls_get_protocol(M_io_t *io, size_t id)
 {
 
 	M_io_layer_t      *layer  = M_io_layer_acquire(io, id, "TLS");
-	M_tls_protocols_t  ret    = M_TLS_PROTOCOL_DEFAULT;
+	M_tls_protocols_t  ret    = M_TLS_PROTOCOL_INVALID;
 	M_io_handle_t     *handle = M_io_layer_get_handle(layer);
 	const struct {
 		const char        *name;
@@ -1199,6 +1403,7 @@ M_tls_protocols_t M_tls_get_protocol(M_io_t *io, size_t id)
 		{ "TLSv1",   M_TLS_PROTOCOL_TLSv1_0 },
 		{ "TLSv1.1", M_TLS_PROTOCOL_TLSv1_1 },
 		{ "TLSv1.2", M_TLS_PROTOCOL_TLSv1_2 },
+		{ "TLSv1.3", M_TLS_PROTOCOL_TLSv1_3 },
 		{ NULL, 0 }
 	};
 
@@ -1267,10 +1472,68 @@ const char *M_tls_protocols_to_str(M_tls_protocols_t protocol)
 			return "TLSv1.1";
 		case M_TLS_PROTOCOL_TLSv1_2:
 			return "TLSv1.2";
+		case M_TLS_PROTOCOL_TLSv1_3:
+			return "TLSv1.3";
 		default:
 			break;
 	}
 	return "Unknown";
+}
+
+
+
+M_tls_protocols_t M_tls_protocols_from_str(const char *protocols_str)
+{
+	M_tls_protocols_t   protocols = 0;
+	char              **parts;
+	size_t              num_parts = 0;
+	size_t              i;
+	size_t              j;
+	static struct {
+		const char        *name;
+		M_tls_protocols_t  protocols;
+	} protcol_flags[] = {
+		{ "tlsv1",    M_TLS_PROTOCOL_TLSv1_0|M_TLS_PROTOCOL_TLSv1_1|M_TLS_PROTOCOL_TLSv1_2|M_TLS_PROTOCOL_TLSv1_3 },
+		{ "tlsv1+",   M_TLS_PROTOCOL_TLSv1_0|M_TLS_PROTOCOL_TLSv1_1|M_TLS_PROTOCOL_TLSv1_2|M_TLS_PROTOCOL_TLSv1_3 },
+		{ "tlsv1.0",  M_TLS_PROTOCOL_TLSv1_0 },
+		{ "tlsv1.0+", M_TLS_PROTOCOL_TLSv1_0|M_TLS_PROTOCOL_TLSv1_1|M_TLS_PROTOCOL_TLSv1_2|M_TLS_PROTOCOL_TLSv1_3 },
+		{ "tlsv1.1",  M_TLS_PROTOCOL_TLSv1_1 },
+		{ "tlsv1.1+", M_TLS_PROTOCOL_TLSv1_1|M_TLS_PROTOCOL_TLSv1_2|M_TLS_PROTOCOL_TLSv1_3 },
+		{ "tlsv1.2",  M_TLS_PROTOCOL_TLSv1_2 },
+		{ "tlsv1.2+", M_TLS_PROTOCOL_TLSv1_2|M_TLS_PROTOCOL_TLSv1_3 },
+		{ "tlsv1.3",  M_TLS_PROTOCOL_TLSv1_3 },
+		{ "tlsv1.3+", M_TLS_PROTOCOL_TLSv1_3 },
+		{ NULL, 0 }
+	};
+
+	if (M_str_isempty(protocols_str))
+		return M_TLS_PROTOCOL_INVALID;
+
+	parts = M_str_explode_str(' ', protocols_str, &num_parts);
+	if (parts == NULL || num_parts == 0)
+		return M_TLS_PROTOCOL_INVALID;
+
+	for (i=0; i<num_parts; i++) {
+		if (M_str_isempty(parts[i])) {
+			continue;
+		}
+
+		for (j=0; protcol_flags[j].name!=NULL; j++) {
+			if (M_str_caseeq(parts[i], protcol_flags[j].name)) {
+				protocols |= protcol_flags[j].protocols;
+			}
+		}
+	}
+	M_str_explode_free(parts, num_parts);
+
+#if OPENSSL_VERSION_NUMBER < 0x1010100fL || defined(LIBRESSL_VERSION_NUMBER)
+	protocols &= ~(M_tls_protocols_t)(M_TLS_PROTOCOL_TLSv1_3);
+#endif
+
+	/* 0 means nothing was set. */
+	if (protocols == 0)
+		protocols = M_TLS_PROTOCOL_INVALID;
+	return protocols;
 }
 
 

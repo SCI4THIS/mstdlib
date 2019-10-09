@@ -1,17 +1,17 @@
 /* The MIT License (MIT)
- * 
- * Copyright (c) 2017 Main Street Softworks, Inc.
- * 
+ *
+ * Copyright (c) 2017 Monetra Technologies, LLC.
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -42,6 +42,7 @@ struct M_io_handle {
 	size_t            report_len; /*!< Size of the report buffer. */
 	M_bool            uses_reportid;
 	M_bool            run;
+	M_bool            started;    /*!< Has the handle run through the init process and had processing threads started. */
 	M_threadid_t      write_tid;
 	M_thread_mutex_t *write_lock;
 	M_thread_cond_t  *write_cond;
@@ -62,29 +63,6 @@ struct M_io_handle {
 	size_t            max_input_report_size;
 	size_t            max_output_report_size;
 };
-
-static M_io_layer_t *get_top_hid_layer(M_io_t *io)
-{
-	M_io_layer_t  *layer;
-	size_t         layer_idx;
-	size_t         layer_count;
-
-	if (io == NULL) {
-		return NULL;
-	}
-
-	layer       = NULL;
-	layer_count = M_io_layer_count(io);
-	for (layer_idx=layer_count; layer_idx-->0; ) {
-		layer = M_io_layer_acquire(io, layer_idx, M_IO_USB_HID_NAME);
-
-		if (layer != NULL) {
-			break;
-		}
-	}
-
-	return layer;
-}
 
 static void M_io_hid_disassociate_runloop(M_io_handle_t *handle)
 {
@@ -166,7 +144,7 @@ static void *M_io_hid_write_loop(void *arg)
 			layer = M_io_layer_acquire(handle->io, 0, NULL);
 			M_snprintf(handle->error, sizeof(handle->error), "%s", M_io_mac_ioreturn_errormsg(ioret));
 			M_io_hid_close_device(handle);
-			M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_ERROR);
+			M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_ERROR, ioerr);
 			M_io_layer_release(layer);
 			break;
 		}
@@ -186,7 +164,7 @@ static void *M_io_hid_write_loop(void *arg)
 		 */
 		if (ioerr == M_IO_ERROR_SUCCESS) {
 			layer = M_io_layer_acquire(handle->io, 0, NULL);
-			M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_WRITE);
+			M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_WRITE, M_IO_ERROR_SUCCESS);
 			M_io_layer_release(layer);
 		}
 
@@ -283,7 +261,7 @@ static char *M_io_hid_get_os_path(IOHIDDeviceRef device)
 	ret = IORegistryEntryGetPath(service, kIOServicePlane, path);
 	if (ret != KERN_SUCCESS)
 		return NULL;
-	
+
 	return M_strdup(path);
 }
 
@@ -347,7 +325,7 @@ static void M_io_hid_enum_device(M_io_hid_enum_t *hidenum, IOHIDDeviceRef device
 	M_io_hid_dev_info(device, manufacturer, sizeof(manufacturer), product, sizeof(product), serial, sizeof(serial),
 			&vendorid, &productid, &path, M_FALSE, NULL, NULL);
 
-	M_io_hid_enum_add(hidenum, path, manufacturer, product, serial, vendorid, productid, 
+	M_io_hid_enum_add(hidenum, path, manufacturer, product, serial, vendorid, productid,
 	                  s_vendor_id, s_product_ids, s_num_product_ids, s_serialnum);
 
 	M_free(path);
@@ -362,7 +340,7 @@ static void M_io_hid_disconnect_iocb(void *context, IOReturn result, void *sende
 	(void)sender;
 
 	layer = M_io_layer_acquire(handle->io, 0, NULL);
-	M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_DISCONNECTED);
+	M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_DISCONNECTED, M_IO_ERROR_DISCONNECT);
 	M_io_layer_release(layer);
 }
 
@@ -382,7 +360,7 @@ static void M_io_hid_read_iocb(void *context, IOReturn result, void *sender, IOH
 	if (M_io_error_is_critical(ioerr)) {
 		M_snprintf(handle->error, sizeof(handle->error), "%s", M_io_mac_ioreturn_errormsg(result));
 		M_io_hid_close_device(handle);
-		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_ERROR);
+		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_ERROR, ioerr);
 		M_io_layer_release(layer);
 		return;
 	}
@@ -390,7 +368,7 @@ static void M_io_hid_read_iocb(void *context, IOReturn result, void *sender, IOH
 	if (reportLength > 0)
 		M_buf_add_bytes(handle->readbuf, report, (size_t)reportLength);
 
-	M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_READ);
+	M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_READ, M_IO_ERROR_SUCCESS);
 	M_io_layer_release(layer);
 }
 
@@ -527,7 +505,7 @@ void M_io_hid_get_max_report_sizes(M_io_t *io, size_t *max_input_size, size_t *m
 		max_output_size = &my_out;
 	}
 
-	layer  = get_top_hid_layer(io);
+	layer  = M_io_hid_get_top_hid_layer(io);
 	handle = M_io_layer_get_handle(layer);
 
 	if (handle == NULL) {
@@ -543,7 +521,7 @@ void M_io_hid_get_max_report_sizes(M_io_t *io, size_t *max_input_size, size_t *m
 
 char *M_io_hid_get_manufacturer(M_io_t *io)
 {
-	M_io_layer_t  *layer  = get_top_hid_layer(io);
+	M_io_layer_t  *layer  = M_io_hid_get_top_hid_layer(io);
 	M_io_handle_t *handle = M_io_layer_get_handle(layer);
 	char          *ret    = NULL;
 
@@ -557,7 +535,7 @@ char *M_io_hid_get_manufacturer(M_io_t *io)
 
 char *M_io_hid_get_path(M_io_t *io)
 {
-	M_io_layer_t  *layer  = get_top_hid_layer(io);
+	M_io_layer_t  *layer  = M_io_hid_get_top_hid_layer(io);
 	M_io_handle_t *handle = M_io_layer_get_handle(layer);
 	char          *ret    = NULL;
 
@@ -571,7 +549,7 @@ char *M_io_hid_get_path(M_io_t *io)
 
 char *M_io_hid_get_product(M_io_t *io)
 {
-	M_io_layer_t  *layer  = get_top_hid_layer(io);
+	M_io_layer_t  *layer  = M_io_hid_get_top_hid_layer(io);
 	M_io_handle_t *handle = M_io_layer_get_handle(layer);
 	char          *ret    = NULL;
 
@@ -585,7 +563,7 @@ char *M_io_hid_get_product(M_io_t *io)
 
 M_uint16 M_io_hid_get_productid(M_io_t *io)
 {
-	M_io_layer_t  *layer  = get_top_hid_layer(io);
+	M_io_layer_t  *layer  = M_io_hid_get_top_hid_layer(io);
 	M_io_handle_t *handle = M_io_layer_get_handle(layer);
 	M_uint16       ret    = 0;
 
@@ -599,7 +577,7 @@ M_uint16 M_io_hid_get_productid(M_io_t *io)
 
 M_uint16 M_io_hid_get_vendorid(M_io_t *io)
 {
-	M_io_layer_t  *layer  = get_top_hid_layer(io);
+	M_io_layer_t  *layer  = M_io_hid_get_top_hid_layer(io);
 	M_io_handle_t *handle = M_io_layer_get_handle(layer);
 	M_uint16       ret    = 0;
 
@@ -613,7 +591,7 @@ M_uint16 M_io_hid_get_vendorid(M_io_t *io)
 
 char *M_io_hid_get_serial(M_io_t *io)
 {
-	M_io_layer_t  *layer  = get_top_hid_layer(io);
+	M_io_layer_t  *layer  = M_io_hid_get_top_hid_layer(io);
 	M_io_handle_t *handle = M_io_layer_get_handle(layer);
 	char          *ret    = NULL;
 
@@ -766,16 +744,26 @@ M_bool M_io_hid_init_cb(M_io_layer_t *layer)
 	M_io_handle_t *handle = M_io_layer_get_handle(layer);
 	M_io_t        *io     = M_io_layer_get_io(layer);
 
+	if (handle->device == NULL)
+		return M_FALSE;
+
+	handle->io = io;
+
+	if (handle->started) {
+		/* Trigger connected soft event when registered with event handle */
+		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_CONNECTED, M_IO_ERROR_SUCCESS);
+		/* Trigger read event if there is data present. */
+		if (M_buf_len(handle->readbuf) != 0) {
+			M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_READ, M_IO_ERROR_SUCCESS);
+		}
+		return M_TRUE;
+	}
+
 	/* Start the global macOS runloop if hasn't already been
  	 * started. The HID system uses a macOS runloop for event
 	 * processing and calls our callbacks which trigger events
 	 * in our event system. */
 	M_io_mac_runloop_start();
-
-	if (handle->device == NULL)
-		return M_FALSE;
-
-	handle->io = io;
 
 	/* Register event callbacks and associate the device with the macOS runloop. */
 	IOHIDDeviceRegisterRemovalCallback(handle->device, M_io_hid_disconnect_iocb, handle);
@@ -783,6 +771,8 @@ M_bool M_io_hid_init_cb(M_io_layer_t *layer)
 	IOHIDDeviceScheduleWithRunLoop(handle->device, M_io_mac_runloop, kCFRunLoopDefaultMode);
 
 	/* Trigger connected soft event when registered with event handle */
-	M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_CONNECTED);
+	M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_CONNECTED, M_IO_ERROR_SUCCESS);
+
+	handle->started = M_TRUE;
 	return M_TRUE;
 }

@@ -12,6 +12,7 @@ set(CMAKE_SIZEOF_VOID_P "@CMAKE_SIZEOF_VOID_P@")
 
 set(MSVC_TOOL_DIR       "@MSVC_TOOL_DIR@")
 set(MSVC_LIB            "@MSVC_LIB@")
+set(MSVC_LIB_ARGS       "@MSVC_LIB_ARGS@")
 set(MSVC_LIB_BATCH      "@MSVC_LIB_BATCH@")
 
 
@@ -53,7 +54,7 @@ if (MSVC_LIB_BATCH)
 	set(cmd cmd /C "${MSVC_LIB_BATCH} /def:${def_name} /out:${implib_name} /machine:${arch}")
 else ()
 	set(ENV{PATH} "${MSVC_TOOL_DIR};$ENV{PATH}")
-	set(cmd "${MSVC_LIB}" /def:${def_name} /out:${implib_name} /machine:${arch})
+	set(cmd "${MSVC_LIB}" ${MSVC_LIB_ARGS} /def:${def_name} /out:${implib_name} /machine:${arch})
 endif ()
 
 execute_process(COMMAND ${cmd}

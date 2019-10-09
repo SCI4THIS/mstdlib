@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  *
- * Copyright (c) 2017 Main Street Softworks, Inc.
+ * Copyright (c) 2017 Monetra Technologies, LLC.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -65,6 +65,9 @@ void M_io_hid_unregister_cb(M_io_layer_t *layer);
 M_bool M_io_hid_disconnect_cb(M_io_layer_t *layer);
 M_bool M_io_hid_init_cb(M_io_layer_t *layer);
 
+M_io_layer_t *M_io_hid_get_top_hid_layer(M_io_t *io);
+M_bool hid_uses_report_descriptors(const unsigned char *desc, size_t len);
+M_bool hid_get_max_report_sizes(const M_uint8 *desc, size_t desc_len, size_t *max_input, size_t *max_output);
 
 #endif
 

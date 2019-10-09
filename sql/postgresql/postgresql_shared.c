@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2017 Main Street Softworks, Inc.
+ * Copyright (c) 2017 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -80,9 +80,10 @@ M_sql_error_t pgsql_cb_connect_runonce(M_sql_conn_t *conn, M_sql_driver_connpool
 }
 
 
-M_bool pgsql_cb_datatype(M_sql_connpool_t *pool, M_buf_t *buf, M_sql_data_type_t type, size_t max_len)
+M_bool pgsql_cb_datatype(M_sql_connpool_t *pool, M_buf_t *buf, M_sql_data_type_t type, size_t max_len, M_bool is_cast)
 {
 	(void)pool;
+	(void)is_cast;
 
 	if (max_len == 0) {
 		max_len = SIZE_MAX;

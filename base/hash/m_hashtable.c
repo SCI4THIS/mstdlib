@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -598,6 +598,14 @@ M_bool M_hashtable_remove(M_hashtable_t *h, const void *key, M_bool destroy_vals
 }
 
 
+M_bool M_hashtable_is_multi(const M_hashtable_t *h)
+{
+	if (h == NULL || !(h->flags & M_HASHTABLE_MULTI_VALUE))
+		return M_FALSE;
+	return M_TRUE;
+}
+
+
 M_bool M_hashtable_multi_len(const M_hashtable_t *h, const void *key, size_t *len)
 {
 	struct M_hashtable_bucket *entry;
@@ -869,6 +877,7 @@ M_bool M_hashtable_enumerate_next(const M_hashtable_t *h, M_hashtable_enum_t *ha
 void M_hashtable_merge(M_hashtable_t **dest, M_hashtable_t *src)
 {
 	M_hashtable_t                *h3;
+	M_hashtable_t                *hm;
 	const void                   *key;
 	const void                   *value;
 	M_hashtable_enum_t            hashenum;
@@ -889,6 +898,8 @@ void M_hashtable_merge(M_hashtable_t **dest, M_hashtable_t *src)
 	callbacks.key_duplicate_copy     = src->key_duplicate_copy;
 	callbacks.key_free               = src->key_free;
 	h3 = M_hashtable_create(src->size, src->fillpct, src->key_hash, src->key_equality, src->flags, &callbacks);
+	/* hm is for tracking keys that have been put into other hashtables. We don't want anything freed. */
+	hm = M_hashtable_create(src->size, src->fillpct, src->key_hash, src->key_equality, src->flags, NULL);
 
 	/* Since will be doing direct pointer copying of keys and values,
 	 * rather than reallocing and freeing the old ones.  Make sure
@@ -911,9 +922,26 @@ void M_hashtable_merge(M_hashtable_t **dest, M_hashtable_t *src)
 			 * The src key needs to be destoryed so we put it in a temporary to
 			 * track it for destruction later. */
 			if (M_hashtable_get(*dest, key, NULL)) {
-				M_hashtable_insert_direct(h3, M_HASHTABLE_INSERT_NODUP, key, NULL);
+				/* A multi value will hae enumerate return the key multiple times.
+				 * Once for each value. We need to track if we put the key
+				 * into dest once. If we did we can't add to h3 and destory
+				 * the key. We need to track if the key was moved into src
+				 * so we don't destory it on subsequent times it's seen. */
+				if (src->flags & M_HASHTABLE_MULTI_VALUE) {
+					/* In dest and wasn't moved into dest previously. */
+					if (!M_hashtable_get(hm, key, NULL)) {
+						M_hashtable_insert_direct(h3, M_HASHTABLE_INSERT_NODUP, key, NULL);
+					}
+				} else {
+					M_hashtable_insert_direct(h3, M_HASHTABLE_INSERT_NODUP, key, NULL);
+				}
 			}
 			M_hashtable_insert_direct(*dest, M_HASHTABLE_INSERT_NODUP, key, value);
+			/* We've seen this key at least once. We've already moved it into dest or h3.
+			 * Keep track of this so we don't try putting it into h3 multiple times. */
+			if (src->flags & M_HASHTABLE_MULTI_VALUE && !M_hashtable_get(hm, key, NULL)) {
+				M_hashtable_insert_direct(hm, M_HASHTABLE_INSERT_NODUP, key, NULL);
+			}
 
 			/* See if we need to rehash it because we added so many entries */
 			if (M_hashtable_exceeds_load(*dest))
@@ -925,6 +953,7 @@ void M_hashtable_merge(M_hashtable_t **dest, M_hashtable_t *src)
 	 * we disallow freeing of the actualy key/value pairs earlier, this should
 	 * be safe */
 	M_hashtable_destroy(src, M_FALSE);
+	M_hashtable_destroy(hm, M_FALSE);
 	M_hashtable_destroy(h3, M_FALSE);
 }
 

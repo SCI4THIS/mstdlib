@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -94,30 +94,6 @@ static void M_parser_mark_int(M_parser_t *parser, enum M_PARSER_MARKED_TYPE type
 }
 
 
-static size_t M_parser_consume_charset_int(M_parser_t *parser, const unsigned char *charset, size_t charset_len, M_bool inclusion)
-{
-	size_t len;
-	size_t i;
-
-	if (parser == NULL || charset == NULL || charset_len == 0)
-		return 0;
-
-	for (len=0; len < parser->data_len; len++) {
-		for (i=0; i<charset_len; i++) {
-			if (parser->data[len] == charset[i])
-				break;
-		}
-		if (inclusion && i == charset_len)
-			break;
-		if (!inclusion && i != charset_len)
-			break;
-	}
-
-	M_parser_consume(parser, len);
-	return len;
-}
-
-
 static void M_parser_mark_clear_int(M_parser_t *parser, enum M_PARSER_MARKED_TYPE type)
 {
 	unsigned char *ptr        = NULL;
@@ -188,6 +164,110 @@ static size_t M_parser_read_buf_mark_int(M_parser_t *parser, enum M_PARSER_MARKE
 	return len;
 }
 
+
+static size_t M_parser_consume_charset_int(M_parser_t *parser, const unsigned char *charset, size_t charset_len, M_bool inclusion)
+{
+	size_t len;
+	size_t i;
+
+	if (parser == NULL || charset == NULL || charset_len == 0)
+		return 0;
+
+	for (len=0; len < parser->data_len; len++) {
+		for (i=0; i<charset_len; i++) {
+			if (parser->data[len] == charset[i])
+				break;
+		}
+		if (inclusion && i == charset_len)
+			break;
+		if (!inclusion && i != charset_len)
+			break;
+	}
+
+	M_parser_consume(parser, len);
+	return len;
+}
+
+static size_t M_parser_read_bytes_charset_int(M_parser_t *parser, const unsigned char *charset, size_t charset_len, unsigned char *buf, size_t buf_len, M_bool inclusion)
+{
+	size_t cnt;
+
+	if (parser == NULL || buf == NULL || buf_len == 0 || charset == NULL || charset_len == 0)
+		return 0;
+
+	/* Mark internal */
+	M_parser_mark_int(parser, M_PARSER_MARKED_INT);
+
+	/* Consume the charset */
+	if (inclusion) {
+		cnt = M_parser_consume_charset_int(parser, charset, charset_len, M_TRUE);
+	} else {
+		cnt = M_parser_consume_charset_int(parser, charset, charset_len, M_FALSE);
+	}
+	if (cnt == 0) {
+		M_parser_mark_clear_int(parser, M_PARSER_MARKED_INT);
+		return 0;
+	}
+
+	/* Output the data from the marked position, this will also clear the mark */
+	return M_parser_read_bytes_mark_int(parser, M_PARSER_MARKED_INT, buf, buf_len);
+}
+
+static size_t M_parser_read_str_charset_int(M_parser_t *parser, const char *charset, char *buf, size_t buf_len, M_bool inclusion)
+{
+	size_t len;
+
+	if (buf == NULL || buf_len == 0)
+		return 0;
+
+	if (inclusion) {
+		len = M_parser_read_bytes_charset(parser, (const unsigned char *)charset, M_str_len(charset), (unsigned char *)buf, buf_len-1);
+	} else {
+		len = M_parser_read_bytes_not_charset(parser, (const unsigned char *)charset, M_str_len(charset), (unsigned char *)buf, buf_len-1);
+	}
+
+	if (len == 0)
+		return 0;
+
+	/* NULL terminate */
+	buf[len]=0;
+	return len;
+}
+
+static char *M_parser_read_strdup_charset_int(M_parser_t *parser, const char *charset, M_bool inclusion)
+{
+	size_t len;
+	char  *out = NULL;
+
+	if (parser == NULL || charset == NULL || M_str_len(charset) == 0)
+		return NULL;
+
+	/* Mark internal */
+	M_parser_mark_int(parser, M_PARSER_MARKED_INT);
+
+	/* Consume the charset */
+	if (inclusion) {
+		len = M_parser_consume_str_charset(parser, charset);
+	} else {
+		len = M_parser_consume_str_not_charset(parser, charset);
+	}
+	if (len == 0) {
+		M_parser_mark_clear_int(parser, M_PARSER_MARKED_INT);
+		return NULL;
+	}
+
+	out = M_malloc(len+1);
+
+	/* Output the data from the marked position, this will also clear the mark */
+	if (M_parser_read_bytes_mark_int(parser, M_PARSER_MARKED_INT, (unsigned char *)out, len) != len) {
+		M_free(out);
+		return NULL;
+	}
+
+	out[len] = 0;
+	return out;
+}
+
 static size_t M_parser_read_buf_charset_int(M_parser_t *parser, M_buf_t *buf, const unsigned char *charset, size_t charset_len, M_bool inclusion)
 {
 	if (parser == NULL || buf == NULL || charset == NULL || charset_len == 0)
@@ -202,7 +282,7 @@ static size_t M_parser_read_buf_charset_int(M_parser_t *parser, M_buf_t *buf, co
 		return 0;
 	}
 
-	/* Output the data from the marked position, this will also clear the mark */ 
+	/* Output the data from the marked position, this will also clear the mark */
 	return M_parser_read_buf_mark_int(parser, M_PARSER_MARKED_INT, buf);
 }
 
@@ -370,7 +450,7 @@ static void M_parser_ensure_space(M_parser_t *parser, size_t len)
 	if (len == 0)
 		return;
 
-	/* Lets see if there is enough room in the current buffer, if not, 
+	/* Lets see if there is enough room in the current buffer, if not,
 	 * expand to the next closest power of 2 */
 	if (parser->data_dyn == NULL || len > parser->data_dyn_size - keep_len) {
 		parser->data_dyn_size = M_size_t_round_up_to_power_of_two(keep_len + len);
@@ -717,16 +797,19 @@ size_t M_parser_truncate_until(M_parser_t *parser, const unsigned char *pat, siz
 	const unsigned char *ptr;
 	size_t               consumed_len;
 
-	if (parser == NULL || pat == NULL || len == 0)
+	if (parser == NULL || pat == NULL || len == 0 || len > parser->data_len)
 		return 0;
 
 	ptr = M_mem_rmem(parser->data, parser->data_len, pat, len);
-	if (ptr == NULL)
-		return 0;
+	if (ptr == NULL) {
+		consumed_len = parser->data_len;
+	} else {
+		consumed_len = parser->data_len - (size_t)(ptr - parser->data);
+		if (!eat_pat) {
+			consumed_len -= len;
+		}
+	}
 
-	consumed_len = (size_t)(ptr - parser->data);
-	if (!eat_pat)
-		consumed_len -= len;
 	M_parser_truncate(parser, parser->data_len-consumed_len);
 	return consumed_len;
 }
@@ -736,11 +819,12 @@ size_t M_parser_truncate_charset(M_parser_t *parser, const unsigned char *charse
 {
 	size_t i;
 	size_t j;
+	size_t v;
 
 	if (parser == NULL || charset == NULL || charset_len == 0)
 		return 0;
 
-	for (i=parser->data_len; i-->0; ) {
+	for (i=parser->data_len, v=0; i-->0; v++) {
 		for (j=0; j<charset_len; j++) {
 			if (parser->data[i] == charset[j])
 				break;
@@ -749,33 +833,34 @@ size_t M_parser_truncate_charset(M_parser_t *parser, const unsigned char *charse
 			break;
 	}
 
-	if (i == parser->data_len)
-		return 0;
-	M_parser_truncate(parser, parser->data_len - i);
-	return i;
+	M_parser_truncate(parser, parser->data_len - v);
+	return v;
 }
 
 
 size_t M_parser_truncate_predicate_max(M_parser_t *parser, M_parser_predicate_func func, size_t max)
 {
-	size_t i;
+	size_t i    = 0;
+	size_t end  = 0;
+	size_t consumed;
 
 	if (parser == NULL || func == NULL || max == 0)
 		return 0;
 
-	if (max > parser->data_len)
-		max = parser->data_len;
+	if (max < parser->data_len) {
+		end = parser->data_len - max;
+	}
 
-	for (i=max; i-->0; ) {
-		if (!func(parser->data[i])) {
+	for (i=parser->data_len; i>end; i--) {
+		if (!func(parser->data[i-1])) {
 			break;
 		}
 	}
 
-	if (i == parser->data_len)
-		return 0;
-	M_parser_truncate(parser, parser->data_len - i);
-	return i;
+	consumed = parser->data_len - i;
+	M_parser_truncate(parser, i);
+
+	return consumed;
 }
 
 size_t M_parser_truncate_predicate(M_parser_t *parser, M_parser_predicate_func func)
@@ -1158,7 +1243,7 @@ size_t M_parser_read_bytes_until(M_parser_t *parser, unsigned char *buf, size_t 
 		return 0;
 	}
 
-	/* Output the data from the marked position, this will also clear the mark */ 
+	/* Output the data from the marked position, this will also clear the mark */
 	return M_parser_read_bytes_mark_int(parser, M_PARSER_MARKED_INT, buf, buf_len);
 }
 
@@ -1180,7 +1265,7 @@ size_t M_parser_read_bytes_boundary(M_parser_t *parser, unsigned char *buf, size
 		return 0;
 	}
 
-	/* Output the data from the marked position, this will also clear the mark */ 
+	/* Output the data from the marked position, this will also clear the mark */
 	return M_parser_read_bytes_mark_int(parser, M_PARSER_MARKED_INT, buf, buf_len);
 
 }
@@ -1188,20 +1273,13 @@ size_t M_parser_read_bytes_boundary(M_parser_t *parser, unsigned char *buf, size
 
 size_t M_parser_read_bytes_charset(M_parser_t *parser, const unsigned char *charset, size_t charset_len, unsigned char *buf, size_t buf_len)
 {
-	if (parser == NULL || buf == NULL || buf_len == 0 || charset == NULL || charset_len == 0)
-		return 0;
+	return M_parser_read_bytes_charset_int(parser, charset, charset_len, buf, buf_len, M_TRUE);
+}
 
-	/* Mark internal */
-	M_parser_mark_int(parser, M_PARSER_MARKED_INT);
 
-	/* Consume the charset */
-	if (M_parser_consume_charset_int(parser, charset, charset_len, M_TRUE) == 0) {
-		M_parser_mark_clear_int(parser, M_PARSER_MARKED_INT);
-		return 0;
-	}
-
-	/* Output the data from the marked position, this will also clear the mark */ 
-	return M_parser_read_bytes_mark_int(parser, M_PARSER_MARKED_INT, buf, buf_len);
+size_t M_parser_read_bytes_not_charset(M_parser_t *parser, const unsigned char *charset, size_t charset_len, unsigned char *buf, size_t buf_len)
+{
+	return M_parser_read_bytes_charset_int(parser, charset, charset_len, buf, buf_len, M_TRUE);
 }
 
 
@@ -1219,7 +1297,7 @@ size_t M_parser_read_bytes_predicate(M_parser_t *parser, M_parser_predicate_func
 		return 0;
 	}
 
-	/* Output the data from the marked position, this will also clear the mark */ 
+	/* Output the data from the marked position, this will also clear the mark */
 	return M_parser_read_bytes_mark_int(parser, M_PARSER_MARKED_INT, buf, buf_len);
 }
 
@@ -1301,19 +1379,13 @@ size_t M_parser_read_str_boundary(M_parser_t *parser, char *buf, size_t buf_len,
 
 size_t M_parser_read_str_charset(M_parser_t *parser, const char *charset, char *buf, size_t buf_len)
 {
-	size_t len;
+	return M_parser_read_str_charset_int(parser, charset, buf, buf_len, M_TRUE);
+}
 
-	if (buf == NULL || buf_len == 0)
-		return 0;
 
-	len = M_parser_read_bytes_charset(parser, (const unsigned char *)charset, M_str_len(charset), (unsigned char *)buf, buf_len-1);
-
-	if (len == 0)
-		return 0;
-
-	/* NULL terminate */
-	buf[len]=0;
-	return len;
+size_t M_parser_read_str_not_charset(M_parser_t *parser, const char *charset, char *buf, size_t buf_len)
+{
+	return M_parser_read_str_charset_int(parser, charset, buf, buf_len, M_FALSE);
 }
 
 
@@ -1381,8 +1453,8 @@ char *M_parser_read_strdup_hex(M_parser_t *parser, size_t len)
 		return NULL;
 	}
 
-	hex = M_bincodec_encode_alloc(M_parser_peek(parser), parser->data_len, 0, M_BINCODEC_HEX);
-	M_parser_consume(parser, parser->data_len);
+	hex = M_bincodec_encode_alloc(M_parser_peek(parser), len, 0, M_BINCODEC_HEX);
+	M_parser_consume(parser, len);
 	return hex;
 }
 
@@ -1407,7 +1479,7 @@ char *M_parser_read_strdup_until(M_parser_t *parser, const char *pat, M_bool eat
 
 	out = M_malloc(len+1);
 	
-	/* Output the data from the marked position, this will also clear the mark */ 
+	/* Output the data from the marked position, this will also clear the mark */
 	if (M_parser_read_bytes_mark_int(parser, M_PARSER_MARKED_INT, (unsigned char *)out, len) != len) {
 		M_free(out);
 		return NULL;
@@ -1451,32 +1523,13 @@ char *M_parser_read_strdup_boundary(M_parser_t *parser, const char *pat, M_bool 
 
 char *M_parser_read_strdup_charset(M_parser_t *parser, const char *charset)
 {
-	size_t len;
-	char  *out = NULL;
+	return M_parser_read_strdup_charset_int(parser, charset, M_TRUE);
+}
 
-	if (parser == NULL || charset == NULL || M_str_len(charset) == 0)
-		return NULL;
 
-	/* Mark internal */
-	M_parser_mark_int(parser, M_PARSER_MARKED_INT);
-
-	/* Consume the charset */
-	len = M_parser_consume_str_charset(parser, charset);
-	if (len == 0) {
-		M_parser_mark_clear_int(parser, M_PARSER_MARKED_INT);
-		return NULL;
-	}
-
-	out = M_malloc(len+1);
-	
-	/* Output the data from the marked position, this will also clear the mark */ 
-	if (M_parser_read_bytes_mark_int(parser, M_PARSER_MARKED_INT, (unsigned char *)out, len) != len) {
-		M_free(out);
-		return NULL;
-	}
-
-	out[len] = 0;
-	return out;
+char *M_parser_read_strdup_not_charset(M_parser_t *parser, const char *charset)
+{
+	return M_parser_read_strdup_charset_int(parser, charset, M_FALSE);
 }
 
 
@@ -1500,7 +1553,7 @@ char *M_parser_read_strdup_predicate_max(M_parser_t *parser, M_parser_predicate_
 
 	out = M_malloc(len+1);
 	
-	/* Output the data from the marked position, this will also clear the mark */ 
+	/* Output the data from the marked position, this will also clear the mark */
 	if (M_parser_read_bytes_mark_int(parser, M_PARSER_MARKED_INT, (unsigned char *)out, len) != len) {
 		M_free(out);
 		return NULL;
@@ -1798,7 +1851,7 @@ M_PARSER_FRAME_ERROR M_parser_read_stxetxlrc_message(M_parser_t *parser, M_parse
 	*out = M_parser_create(parser->flags);
 	M_parser_append(*out, data+1, rlen-2);
 
-	/* Determine which (if any) framing characters will be included in the 
+	/* Determine which (if any) framing characters will be included in the
  	 * LRC calculation. */
 	offset = 0;
 	clen   = rlen;
@@ -1891,7 +1944,7 @@ size_t M_parser_read_buf_until(M_parser_t *parser, M_buf_t *buf, const unsigned 
 		return 0;
 	}
 
-	/* Output the data from the marked position, this will also clear the mark */ 
+	/* Output the data from the marked position, this will also clear the mark */
 	return M_parser_read_buf_mark_int(parser, M_PARSER_MARKED_INT, buf);
 }
 
@@ -1912,7 +1965,7 @@ size_t M_parser_read_buf_boundary(M_parser_t *parser, M_buf_t *buf, const unsign
 		return 0;
 	}
 
-	/* Output the data from the marked position, this will also clear the mark */ 
+	/* Output the data from the marked position, this will also clear the mark */
 	return M_parser_read_buf_mark_int(parser, M_PARSER_MARKED_INT, buf);
 }
 
@@ -1940,7 +1993,7 @@ size_t M_parser_read_buf_predicate_max(M_parser_t *parser, M_buf_t *buf, M_parse
 		return 0;
 	}
 
-	/* Output the data from the marked position, this will also clear the mark */ 
+	/* Output the data from the marked position, this will also clear the mark */
 	return M_parser_read_buf_mark_int(parser, M_PARSER_MARKED_INT, buf);
 }
 

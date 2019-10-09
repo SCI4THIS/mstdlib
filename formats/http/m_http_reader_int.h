@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2018 Main Street Softworks, Inc.
+ * Copyright (c) 2018 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -45,7 +45,7 @@ typedef enum {
 	M_HTTP_READER_STEP_DONE
 } M_http_reader_step_t;
 
-struct M_http_reader{
+struct M_http_reader {
 	struct M_http_reader_callbacks  cbs;
 	M_http_reader_flags_t           flags;
 	void                           *thunk;

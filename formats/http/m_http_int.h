@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2018 Main Street Softworks, Inc.
+ * Copyright (c) 2018 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -28,9 +28,13 @@
 #include <mstdlib/mstdlib_formats.h>
 #include "m_defs_int.h"
 
+#include "http/m_http_header.h"
 #include "http/m_http_reader_int.h"
 
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ * Internal object used by simple and other internal functionality to track
+ * aspects of the http object. Not for public use.
+ */
 
 struct M_http;
 typedef struct M_http M_http_t;
@@ -60,9 +64,12 @@ struct M_http {
 
 	M_bool                 is_chunked;
 
-	M_hash_dict_t         *headers;
+	M_hash_strvp_t        *headers;
+	char                  *content_type;
+	char                  *charset;
+	M_textcodec_codec_t    codec;
 	M_list_str_t          *set_cookies;
-	M_hash_dict_t         *trailers;
+	M_hash_strvp_t        *trailers;
 
 	M_buf_t               *body;
 	M_bool                 have_body_len;
@@ -72,11 +79,12 @@ struct M_http {
 	M_list_t              *chunks; /* M_http_chunk_t */
 };
 
-struct M_http_simple {
+struct M_http_simple_read {
 	M_http_t                   *http;
 	M_http_simple_read_flags_t  rflags;
 	M_bool                      rdone;
-} ;
+	M_hash_dict_t              *body_form_data;
+};
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -214,6 +222,7 @@ void M_http_set_method(M_http_t *http, M_http_method_t method);
  */
 const char *M_http_uri(const M_http_t *http);
 
+
 /*! Set the request URI.
  *
  * \param[in] http HTTP object.
@@ -286,12 +295,27 @@ const M_hash_dict_t *M_http_query_args(const M_http_t *http);
  *
  * Does not included the "Set-Cookie" header which can be sent multiple
  * times with different attributes.
+ * Multi-dict of headers.
+ *
+ * Value attributes will be part of the value in the dict.
  *
  * \param[in] http HTTP object.
  *
  * \return Multi value dict.
  */
-const M_hash_dict_t *M_http_headers(const M_http_t *http);
+M_hash_dict_t *M_http_headers_dict(const M_http_t *http);
+
+
+/*! Get a list of headers that are sent.
+ *
+ * Should be used with M_http_header to get the
+ * full combined header.
+ *
+ * \param[in] http HTTP object.
+ *
+ * \return List of header keys.
+ */
+M_list_str_t *M_http_headers(const M_http_t *http);
 
 
 /*! Get all values for a header combined into a string.
@@ -331,14 +355,13 @@ M_bool M_http_set_header(M_http_t *http, const char *key, const char *val);
 /*! Add a value to a header.
  *
  * Preserves existing values.
- * Cannot not be a comma (,) separated list.
- * This adds to any existing values
+ * Adds a new value to the header list of values. Can be a comma (,) separated list.
  *
  * \param[in] http HTTP object.
  * \param[in] key  Header name.
  * \param[in] val  Value.
  */
-void M_http_add_header(M_http_t *http, const char *key, const char *val);
+M_bool M_http_add_header(M_http_t *http, const char *key, const char *val);
 
 
 /*! Remove a header.
@@ -376,15 +399,38 @@ void M_http_set_cookie_remove(M_http_t *http, size_t idx);
 void M_http_set_cookie_insert(M_http_t *http, const char *val);
 
 
+/*! Update the character encoding of it has changed.
+ * 
+ * \param[in] http  HTTP object.
+ * \param[in] codec Text encoding.
+ */
+void M_http_update_charset(M_http_t *http, M_textcodec_codec_t codec);
+
+
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 /*! Get the trailing headers.
+ *
+ * Value attributes will be part of the value in the dict.
  *
  * \param[in] http HTTP object.
  *
  * \return Multi value dict.
  */
-const M_hash_dict_t *M_http_trailers(const M_http_t *http);
+M_hash_dict_t *M_http_trailers_dict(const M_http_t *http);
+
+
+/*! Get a list of trailing headers that are sent.
+ *
+ * Should be used with M_http_trailer to get the
+ * full combined trailer.
+ *
+ * \param[in] http HTTP object.
+ *
+ * \return List of trailer keys.
+ */
+
+M_list_str_t *M_http_trailers(const M_http_t *http);
 
 
 /*! Get all values for a trailer combined into a single
@@ -424,14 +470,13 @@ M_bool M_http_set_trailer(M_http_t *http, const char *key, const char *val);
 /*! Add a value to a trailer.
  *
  * Preserves existing values.
- * Cannot not be a comma (,) separated list.
- * This adds a single value to any existing values
+ * Adds a new value to the header list of values. Can be a comma (,) separated list.
  *
  * \param[in] http HTTP object.
  * \param[in] key  Header name.
  * \param[in] val  Value.
  */
-void M_http_add_trailer(M_http_t *http, const char *key, const char *val);
+M_bool M_http_add_trailer(M_http_t *http, const char *key, const char *val);
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */

@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -831,6 +831,22 @@ M_API size_t M_parser_read_bytes_boundary(M_parser_t *parser, unsigned char *buf
 M_API size_t M_parser_read_bytes_charset(M_parser_t *parser, const unsigned char *charset, size_t charset_len, unsigned char *buf, size_t buf_len);
 
 
+/*! Read bytes (binary) from the current buffer as long as the bytes do not match the
+ * provided character set, output in the user-provided buffer and advance.
+ *
+ * The data read will not be NULL terminated.
+ *
+ * \param[in,out] parser      Parser object.
+ * \param[in]     charset     Array of characters that are allowed.
+ * \param[in]     charset_len Length of character set.
+ * \param[out]    buf         Buffer to store result.
+ * \param[in]     buf_len     Size of result buffer.
+ *
+ * \return Length of data read, or 0 on error.
+ */
+M_API size_t M_parser_read_bytes_not_charset(M_parser_t *parser, const unsigned char *charset, size_t charset_len, unsigned char *buf, size_t buf_len);
+
+
 /*! Read bytes (binary) from the current buffer as long as the bytes match the
  * provided predicate, output in the user-provided buffer and advance.
  *
@@ -963,6 +979,22 @@ M_API size_t M_parser_read_str_boundary(M_parser_t *parser, char *buf, size_t bu
 M_API size_t M_parser_read_str_charset(M_parser_t *parser, const char *charset, char *buf, size_t buf_len);
 
 
+/*! Read data from the buffer for as long as it does not match one of the bytes in the given character set and advance.
+ *
+ * Put the resulting bytes in the provided buffer.
+ *
+ * \param[in,out] parser  Parser object.
+ * \param[in]     charset Array of characters that are allowed, NULL terminated.
+ * \param[out]    buf     Buffer to store result. Will be NULL terminated.
+ * \param[in]     buf_len Size of result buffer.
+ *
+ * \return Length of data read, or 0 on error.
+ *
+ * \see M_parser_read_strdup_charset
+ */
+M_API size_t M_parser_read_str_not_charset(M_parser_t *parser, const char *charset, char *buf, size_t buf_len);
+
+
 /*! Read data from the buffer for as long as it matches the given predicate function and advance.
  *
  * Put the resulting bytes in the provided buffer.
@@ -1077,6 +1109,20 @@ M_API char *M_parser_read_strdup_boundary(M_parser_t *parser, const char *pat, M
  * \see M_parser_read_str_charset
  */
 M_API char *M_parser_read_strdup_charset(M_parser_t *parser, const char *charset);
+
+
+/*! Read data from the buffer for as long as it does not match one of the bytes in the given character set and advance.
+ *
+ * Put the resulting bytes in a newly allocated buffer.
+ *
+ * \param[in,out] parser  Parser object.
+ * \param[in]     charset Array of characters that are allowed, NULL terminated.
+ *
+ * \return NULL-terminated result buffer, or NULL on error.
+ *
+ * \see M_parser_read_str_not_charset
+ */
+M_API char *M_parser_read_strdup_not_charset(M_parser_t *parser, const char *charset);
 
 
 /*! Read data from the buffer for as long as it matches the given predicate function and advance.
@@ -1472,22 +1518,26 @@ M_API M_PARSER_FRAME_ERROR M_parser_read_stxetxlrc_message(M_parser_t *parser, M
 
 /*! Validate the parser matches the given predicate function.
  *
+ * If the input char data is signed, use M_parser_is_chr_predicate() instead.
+ *
  * \param[in] parser Parser object.
  * \param[in] len    Length to validate. If larger than the parser length the parser length is used.
  * \param[in] func   Predicate function.
  *
- * \return M_TRUE if matching. Otherwise M_FALSE;
+ * \return M_TRUE if matching. Otherwise M_FALSE.
  */
 M_API M_bool M_parser_is_predicate(M_parser_t *parser, size_t len, M_parser_predicate_func func);
 
 
 /*! Validate the parser matches the given chr predicate function.
  *
+ * If the input char data is unsigned, use M_parser_is_predicate() instead.
+ *
  * \param[in] parser Parser object.
  * \param[in] len    Length to validate. If larger than the parser length the parser length is used.
  * \param[in] func   Char predicate function.
  *
- * \return M_TRUE if matching. Otherwise M_FALSE;
+ * \return M_TRUE if matching. Otherwise M_FALSE.
  */
 M_API M_bool M_parser_is_chr_predicate(M_parser_t *parser, size_t len, M_chr_predicate_func func);
 
@@ -1499,7 +1549,7 @@ M_API M_bool M_parser_is_chr_predicate(M_parser_t *parser, size_t len, M_chr_pre
  * \param[in] charset     Character set.
  * \param[in] charset_len Length of given character set.
  *
- * \return M_TRUE if matching. Otherwise M_FALSE;
+ * \return M_TRUE if matching. Otherwise M_FALSE.
  */
 M_API M_bool M_parser_is_charset(M_parser_t *parser, size_t len, const unsigned char *charset, size_t charset_len);
 
@@ -1510,29 +1560,33 @@ M_API M_bool M_parser_is_charset(M_parser_t *parser, size_t len, const unsigned 
  * \param[in] len         Length to validate. If larger than the parser length the parser length is used.
  * \param[in] charset     Character set.
  *
- * \return M_TRUE if matching. Otherwise M_FALSE;
+ * \return M_TRUE if matching. Otherwise M_FALSE.
  */
 M_API M_bool M_parser_is_str_charset(M_parser_t *parser, size_t len, const char *charset);
 
 
 /*! Validate the parser does not match the given predicate function.
  *
+ * If the input char data is signed, use M_parser_is_not_chr_predicate() instead.
+ *
  * \param[in] parser Parser object.
  * \param[in] len    Length to validate. If larger than the parser length the parser length is used.
  * \param[in] func   Predicate function.
  *
- * \return M_TRUE if not matching. Otherwise M_FALSE;
+ * \return M_TRUE if not matching. Otherwise M_FALSE. If parser is NULL, len is 0, or func is NULL, this will return M_TRUE.
  */
 M_API M_bool M_parser_is_not_predicate(M_parser_t *parser, size_t len, M_parser_predicate_func func);
 
 
 /*! Validate the parser does not match the given chr predicate function.
  *
+ * If the input char data is unsigned, use M_parser_is_not_predicate() instead.
+ *
  * \param[in] parser Parser object.
  * \param[in] len    Length to validate. If larger than the parser length the parser length is used.
  * \param[in] func   Char predicate function.
  *
- * \return M_TRUE if not matching. Otherwise M_FALSE;
+ * \return M_TRUE if not matching. Otherwise M_FALSE. If parser is NULL, len is 0, or func is NULL, this will return M_TRUE.
  */
 M_API M_bool M_parser_is_not_chr_predicate(M_parser_t *parser, size_t len, M_chr_predicate_func func);
 
@@ -1544,7 +1598,7 @@ M_API M_bool M_parser_is_not_chr_predicate(M_parser_t *parser, size_t len, M_chr
  * \param[in] charset     Character set.
  * \param[in] charset_len Length of given character set.
  *
- * \return M_TRUE if not matching. Otherwise M_FALSE;
+ * \return M_TRUE if not matching. Otherwise M_FALSE. If parser is NULL, len is 0, charset is NULL, or charset_len is 0, this will return M_TRUE.
  */
 M_API M_bool M_parser_is_not_charset(M_parser_t *parser, size_t len, const unsigned char *charset, size_t charset_len);
 
@@ -1555,7 +1609,7 @@ M_API M_bool M_parser_is_not_charset(M_parser_t *parser, size_t len, const unsig
  * \param[in] len         Length to validate. If larger than the parser length the parser length is used.
  * \param[in] charset     Character set.
  *
- * \return M_TRUE if not matching. Otherwise M_FALSE;
+ * \return M_TRUE if not matching. Otherwise M_FALSE. If parser is NULL, len is 0, or charset is NULL, this will return M_TRUE.
  */
 M_API M_bool M_parser_is_not_str_charset(M_parser_t *parser, size_t len, const char *charset);
 

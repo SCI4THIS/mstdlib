@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2018 Main Street Softworks, Inc.
+ * Copyright (c) 2018-2019 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -25,6 +25,7 @@
  * When a peripheral first connects we know very little about it. Before any reads
  * or write can happen we need to get a list of services and each service's
  * characteristics. This is an async process which follows this pattern.
+ * Note: 1-3 could be skipped, see below.
  *
  * 1. Start a scan
  * 2. didDiscoverPeripheral is triggered with a peripheral object.
@@ -35,6 +36,15 @@
  * 7. For each service reported request its characteristics.
  * 8. didDiscoverCharacteristicsForService is triggered.
  * 9. Associate peripheral with M_io_ble_device_t.
+ *
+ * If the peripheral was founding using retrievePeripheralsWithIdentifiers
+ * or retrieveConnectedPeripheralsWithServices the sequence starts at
+ * step 4 here. Step 3 would have already been called elsewhere.
+ *
+ * The scan in step 1 never passes a service. The scan could be happening
+ * for multiple reasons and device connection requests at once. For example,
+ * opening two different devices. Scanning for everything allows us to find
+ * multiple devices and update the enumeration cache all at the same time.
  */
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -92,10 +102,12 @@ static void del_scan_trigger(void *p)
 
 @implementation M_io_ble_mac_manager
 
-CBCentralManager *_manager   = nil;
-M_list_t         *triggers   = NULL; /* List of ScanTrigger objects */
-BOOL              powered_on = NO;
-NSUInteger        blind_cnt  = 0;
+CBCentralManager      *_manager     = nil;
+M_list_t              *triggers     = NULL; /* List of ScanTrigger objects */
+NSUInteger             blind_cnt    = 0;
+BOOL                   _state_up    = NO;
+BOOL                   _initialized = NO;
+M_io_ble_mac_powered_t _powered     = M_IO_BLE_MAC_POWERED_UNKNOWN;
 
 + (id)m_io_ble_mac_manager
 {
@@ -142,7 +154,7 @@ NSUInteger        blind_cnt  = 0;
 	if (trigger == NULL)
 		return;
 
-	if (!_manager.isScanning && powered_on)
+	if (!_manager.isScanning && _state_up)
 		[_manager scanForPeripheralsWithServices:nil options:nil];
 
 	timeout_ms = M_io_ble_validate_timeout(timeout_ms);
@@ -155,17 +167,27 @@ NSUInteger        blind_cnt  = 0;
 
 - (void)startScanBlind
 {
-	if (_manager.isScanning || !powered_on)
+	if (!_state_up) {
+		blind_cnt = 0;
 		return;
+	}
+
 	blind_cnt++;
 
-	[_manager scanForPeripheralsWithServices:nil options:nil];
+	if (!_manager.isScanning)
+		[_manager scanForPeripheralsWithServices:nil options:nil];
 }
 
 - (void)stopScanBlind
 {
+	M_io_ble_device_reap_seen();
+
+	if (!_manager.isScanning || !_state_up)
+		blind_cnt = 0;
+
 	if (blind_cnt == 0)
 		return;
+
 	blind_cnt--;
 
 	/* Scan requests might still be outstanding. Don't
@@ -178,22 +200,20 @@ NSUInteger        blind_cnt  = 0;
 
 	if (_manager.isScanning)
 		[_manager stopScan];
-	M_io_ble_device_reap_seen();
 }
 
 - (void)scanTimeout:(NSTimer *)timer
 {
-	ScanTrigger *st = timer.userInfo;
-	size_t       idx;
+	ScanTrigger *st  = timer.userInfo;
+	size_t       idx = 0;
 
-	if (st == nil || !M_list_index_of(triggers, (__bridge CFTypeRef)st, M_LIST_MATCH_PTR, &idx))
-		return;
+	M_io_ble_device_reap_seen();
 
-	M_list_remove_at(triggers, idx);
-	if (M_list_len(triggers) == 0 && blind_cnt == 0) {
+	if (st != nil && M_list_index_of(triggers, (__bridge CFTypeRef)st, M_LIST_MATCH_PTR, &idx))
+		M_list_remove_at(triggers, idx);
+
+	if (_manager.isScanning && M_list_len(triggers) == 0 && blind_cnt == 0)
 		[_manager stopScan];
-		M_io_ble_device_reap_seen();
-	}
 }
 
 - (void)disconnectFromDevice:(CBPeripheral *)peripheral
@@ -201,7 +221,7 @@ NSUInteger        blind_cnt  = 0;
 	const char        *uuid;
 	CBPeripheralState  state;
 
-	if (!powered_on || _manager == nil || peripheral == nil)	
+	if (!_state_up || _manager == nil || peripheral == nil)	
 		return;
 
 	uuid  = [[[peripheral identifier] UUIDString] UTF8String];
@@ -272,26 +292,36 @@ NSUInteger        blind_cnt  = 0;
 {
 	switch (central.state) {
 		case CBManagerStatePoweredOn:
-			powered_on = YES;
+			_powered  = M_IO_BLE_MAC_POWERED_ON;
+			_state_up = YES;
 			/* Start a scan if something is waiting to find devices. A scan or M_io_ble_create
-			 * request could have come in before the manager had initalized. Or one could have
-			 * been running when a reset or other event happend and now we can resume scanning. */
+			 * request could have come in before the manager had initialized. Or one could have
+			 * been running when a reset or other event happened and now we can resume scanning. */
 			if (!_manager.isScanning && (M_list_len(triggers) != 0 || blind_cnt != 0)) {
 				[_manager scanForPeripheralsWithServices:nil options:nil];
 			}
 			break;
-		case CBManagerStateResetting:
 		case CBManagerStatePoweredOff:
+			/* This will clear all cached devices. Any of these events
+			 * will invalidate the devices. */
+			_state_up = NO;
+			_powered  = M_IO_BLE_MAC_POWERED_OFF;
+			M_io_ble_cbc_event_reset();
+			break;
+		case CBManagerStateResetting:
 		case CBManagerStateUnauthorized:
 		case CBManagerStateUnknown:
 		case CBManagerStateUnsupported:
 		default:
 			/* This will clear all cached devices. Any of these events
 			 * will invalidate the devices. */
+			_state_up = NO;
+			_powered  = M_IO_BLE_MAC_POWERED_UNKNOWN;
 			M_io_ble_cbc_event_reset();
-			powered_on = NO;
 			break;
 	}
+
+	_initialized = YES;
 }
 
 - (void)centralManager:(CBCentralManager *)central didDiscoverPeripheral:(CBPeripheral *)peripheral advertisementData:(NSDictionary<NSString *,id> *)advertisementData RSSI:(NSNumber *)RSSI
@@ -365,8 +395,10 @@ NSUInteger        blind_cnt  = 0;
 
 - (void)peripheral:(CBPeripheral *)peripheral didDiscoverServices:(NSError *)error
 {
-	const char *uuid;
-	char        msg[256];
+	const char   *uuid;
+	const char   *name;
+	M_list_str_t *service_uuids;
+	char          msg[256];
 
 	if (peripheral == nil)
 		return;
@@ -385,8 +417,25 @@ NSUInteger        blind_cnt  = 0;
 		return;
 	}
 
-	for (CBService *service in peripheral.services)
+	service_uuids = M_list_str_create(M_LIST_STR_SORTASC);
+	for (CBService *service in peripheral.services) {
+		M_list_str_insert(service_uuids, [[service.UUID UUIDString] UTF8String]);
+
+		/* Request Characteristics for this peripheral. */
 		[peripheral discoverCharacteristics:nil forService:service];
+	}
+
+	/* Update the seen device name and services for two reasons.
+	 * 
+	 * 1. didDiscoverPeripheral might not have been called to fill this
+	 *    because a scan wasn't run. Peripheral connection from
+	 *    retrievePeripheralsWithIdentifiers and retrieveConnectedPeripheralsWithServices
+	 *    will not run a scan.
+	 * 2. advertisementData from didDiscoverPeripheral might have been incomplete.
+	 */
+	name = [peripheral.name UTF8String];
+	M_io_ble_saw_device(uuid, name, service_uuids);
+	M_list_str_destroy(service_uuids);
 }
 
 - (void)peripheral:(CBPeripheral *)peripheral didModifyServices:(NSArray<CBService *> *)invalidatedServices

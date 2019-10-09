@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2017 Main Street Softworks, Inc.
+ * Copyright (c) 2017 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -43,7 +43,7 @@ __BEGIN_DECLS
  * - Rate limiting download speed for connected clients.
  * - Throttling to prevent network link saturation.
  * - Testing real world network setups.
- * - Determining how an application will preform in a bad environment.
+ * - Determining how an application will perform in a bad environment.
  *
  * @{
  */

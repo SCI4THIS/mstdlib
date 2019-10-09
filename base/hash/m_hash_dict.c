@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -168,6 +168,12 @@ const char *M_hash_dict_get_direct_default(const M_hash_dict_t *h, const char *k
 }
 
 
+M_bool M_hash_dict_is_multi(const M_hash_dict_t *h)
+{
+	return M_hashtable_is_multi((const M_hashtable_t *)h);
+}
+
+
 M_bool M_hash_dict_multi_len(const M_hash_dict_t *h, const char *key, size_t *len)
 {
 	return M_hashtable_multi_len((const M_hashtable_t *)h, key, len);
@@ -308,8 +314,13 @@ M_bool M_hash_dict_serialize_buf(M_hash_dict_t *dict, M_buf_t *buf, char delim, 
 	const char         *key;
 	const char         *val;
 
-	if (dict == NULL || M_hash_dict_num_keys(dict) == 0)
+	/* Error */
+	if (dict == NULL)
 		return M_FALSE;
+
+	/* Blank is ok, should output empty string */
+	if (M_hash_dict_num_keys(dict) == 0)
+		return M_TRUE;
 
 	M_hash_dict_enumerate(dict, &hashenum);
 	while (M_hash_dict_enumerate_next(dict, hashenum, &key, &val)) {
@@ -352,13 +363,20 @@ M_bool M_hash_dict_serialize_buf(M_hash_dict_t *dict, M_buf_t *buf, char delim, 
 char *M_hash_dict_serialize(M_hash_dict_t *dict, char delim, char kv_delim, char quote, char escape, M_uint32 flags)
 {
 	M_buf_t *buf = M_buf_create();
+	char    *out = NULL;
 
 	if (!M_hash_dict_serialize_buf(dict, buf, delim, kv_delim, quote, escape, flags)) {
 		M_buf_cancel(buf);
 		return NULL;
 	}
 
-	return M_buf_finish_str(buf, NULL);
+	out = M_buf_finish_str(buf, NULL);
+
+	/* We want to make sure it outputs an empty string not NULL on no entries */
+	if (out == NULL)
+		out = M_strdup("");
+
+	return out;
 }
 
 

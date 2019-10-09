@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2017 Main Street Softworks, Inc.
+ * Copyright (c) 2017 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -47,6 +47,12 @@ M_sql_error_t oracle_resolve_error(const char *sqlstate, M_int32 errorcode)
 		case 3113: /* end of file on communication channel */
 		case 3114: /* not connected */
 		case 3135: /* connection lost contact */
+		case 1453: /* SET TRANSACTION must be first statement of transaction - 
+		            * we've seen this one in Precise Parklink randomly after a
+		            * couple of days of processing for unknown reasons.  SET
+		            * TRANSACTION is never explicitly called in ODBC, but rather
+		            * happens implicitly when setting the connection attribute
+		            * for the isolation level. */
 			return M_SQL_ERROR_CONN_LOST;
 
 
@@ -121,9 +127,10 @@ M_sql_error_t oracle_cb_connect_runonce(M_sql_conn_t *conn, M_sql_driver_connpoo
 
 
 
-M_bool oracle_cb_datatype(M_sql_connpool_t *pool, M_buf_t *buf, M_sql_data_type_t type, size_t max_len)
+M_bool oracle_cb_datatype(M_sql_connpool_t *pool, M_buf_t *buf, M_sql_data_type_t type, size_t max_len, M_bool is_cast)
 {
 	(void)pool;
+	(void)is_cast;
 
 	if (max_len == 0) {
 		max_len = SIZE_MAX;

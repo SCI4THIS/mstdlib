@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -185,6 +185,15 @@ M_API const char *M_hash_dict_get_direct_default(const M_hash_dict_t *h, const c
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+/*! Wether the hashtable a multi value table.
+ *
+ * \param[in] h Hashtable being referenced.
+ *
+ * \return M_TRUE if a multi value hashtable.
+ */
+M_bool M_hash_dict_is_multi(const M_hash_dict_t *h);
+
 
 /*! Get the number of values for a given key.
  *

@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2017 Main Street Softworks, Inc.
+ * Copyright (c) 2017 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -487,16 +487,6 @@ M_API size_t M_sql_stmt_result_num_cols(M_sql_stmt_t *stmt);
  */
 M_API const char *M_sql_stmt_result_col_name(M_sql_stmt_t *stmt, size_t col);
 
-/*! Possible data type response values */
-typedef enum {
-	M_SQL_DATA_TYPE_UNKNOWN = 0, /*!< Not Known, not yet set, most likely an error */
-	M_SQL_DATA_TYPE_BOOL    = 1, /*!< Implemented as an 8bit integer */
-	M_SQL_DATA_TYPE_INT16   = 2, /*!< 16bit signed integer */
-	M_SQL_DATA_TYPE_INT32   = 3, /*!< 32bit signed integer */
-	M_SQL_DATA_TYPE_INT64   = 4, /*!< 64bit signed integer */
-	M_SQL_DATA_TYPE_TEXT    = 5, /*!< Textual data type such as VARCHAR or TEXT, with possible length */
-	M_SQL_DATA_TYPE_BINARY  = 6  /*!< Binary data type such as BLOB or BINARY, with possible length */
-} M_sql_data_type_t;
 
 /*! Retrieve the data type of the returned column.
  *
@@ -508,6 +498,19 @@ typedef enum {
  * \return Column type for referenced column.
  */
 M_API M_sql_data_type_t M_sql_stmt_result_col_type(M_sql_stmt_t *stmt, size_t col, size_t *type_size);
+
+
+/*! Retrieve the data type of the returned column.
+ *
+ * \param[in]  stmt      Initialized and executed #M_sql_stmt_t object.
+ * \param[in]  col       Name of column.
+ * \param[out] type_size Optional, pass NULL if not desired.  For TEXT and BINARY types, the column
+ *                       definition may indicate a possible size (or maximum size).  If the value is 0,
+ *                       it means the column width is bounded by the maximums of the SQL server.
+ * \return Column type for referenced column or M_SQL_DATA_TYPE_UNKNOWN if column not found.
+ */
+M_API M_sql_data_type_t M_sql_stmt_result_col_type_byname(M_sql_stmt_t *stmt, const char *col, size_t *type_size);
+
 
 /*! Retrieve the column index by name
  *

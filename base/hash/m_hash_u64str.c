@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -133,6 +133,12 @@ const char *M_hash_u64str_get_direct(const M_hash_u64str_t *h, M_uint64 key)
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+M_bool M_hash_u64str_is_multi(const M_hash_u64str_t *h)
+{
+	return M_hashtable_is_multi((const M_hashtable_t *)h);
+}
+
 
 M_bool M_hash_u64str_multi_len(const M_hash_u64str_t *h, M_uint64 key, size_t *len)
 {

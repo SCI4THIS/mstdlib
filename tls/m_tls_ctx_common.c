@@ -1,17 +1,17 @@
 /* The MIT License (MIT)
- * 
- * Copyright (c) 2017 Main Street Softworks, Inc.
- * 
+ *
+ * Copyright (c) 2017 Monetra Technologies, LLC.
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -39,11 +39,14 @@
 #include "base/m_defs_int.h"
 #include "m_tls_ctx_common.h"
 
+/* We'll tack these on at the end of the client and server ciphers. Our cipher setting funcion
+ * will parse out the TLSv1.3 only ones and non-TLSv1.3 from the string and set everything correctly. */
+#define TLS_v1_3_CIPHERS "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256"
 /* NOTE: Client still includes RC4 for now due to many servers only supporting RC4 due to
  *       lazy sysadmins that had heard of BEAST many years ago, otherwise enablement of
  *       RC4 should be the only difference. */
-#define TLS_CLIENT_CIPHERS "EECDH+ECDSA+AESGCM:EECDH+aRSA+AESGCM:EECDH+ECDSA+SHA384:EECDH+ECDSA+SHA256:EECDH+aRSA+SHA384:EECDH+aRSA+SHA256:EECDH+aRSA+RC4:EECDH:EDH+aRSA:AES256-GCM-SHA384:AES256-SHA256:AES256-SHA:AES128-SHA:RC4-SHA:!aNULL:!eNULL:!LOW:!3DES:!MD5:!EXP:!PSK:!SRP:!DSS"
-#define TLS_SERVER_CIPHERS "EECDH+ECDSA+AESGCM:EECDH+aRSA+AESGCM:EECDH+ECDSA+SHA384:EECDH+ECDSA+SHA256:EECDH+aRSA+SHA384:EECDH+aRSA+SHA256:EECDH:EDH+aRSA:AES256-GCM-SHA384:AES256-SHA256:AES256-SHA:AES128-SHA:!aNULL:!eNULL:!LOW:!3DES:!RC4:!MD5:!EXP:!PSK:!SRP:!DSS"
+#define TLS_CLIENT_CIPHERS "EECDH+ECDSA+AESGCM:EECDH+aRSA+AESGCM:EECDH+ECDSA+SHA384:EECDH+ECDSA+SHA256:EECDH+aRSA+SHA384:EECDH+aRSA+SHA256:EECDH+aRSA+RC4:EECDH:EDH+aRSA:AES256-GCM-SHA384:AES256-SHA256:AES256-SHA:AES128-SHA:RC4-SHA:!aNULL:!eNULL:!LOW:!3DES:!MD5:!EXP:!PSK:!SRP:!DSS" ":" TLS_v1_3_CIPHERS
+#define TLS_SERVER_CIPHERS "EECDH+ECDSA+AESGCM:EECDH+aRSA+AESGCM:EECDH+ECDSA+SHA384:EECDH+ECDSA+SHA256:EECDH+aRSA+SHA384:EECDH+aRSA+SHA256:EECDH:EDH+aRSA:AES256-GCM-SHA384:AES256-SHA256:AES256-SHA:AES128-SHA:!aNULL:!eNULL:!LOW:!3DES:!RC4:!MD5:!EXP:!PSK:!SRP:!DSS" ":" TLS_v1_3_CIPHERS
 
 
 SSL_CTX *M_tls_ctx_init(M_bool is_server)
@@ -53,7 +56,6 @@ SSL_CTX *M_tls_ctx_init(M_bool is_server)
 	if (ctx == NULL) {
 		return NULL;
 	}
-	
 
 	/* Set some default options */
 	M_tls_ctx_set_protocols(ctx, M_TLS_PROTOCOL_DEFAULT);
@@ -61,13 +63,19 @@ SSL_CTX *M_tls_ctx_init(M_bool is_server)
 
 	/* Client-only settings */
 	if (!is_server) {
-	/* Sometimes ticket support can confuse old servers, disable */
 #ifndef OPENSSL_NO_TLSEXT
+		/* Per the Apache docs
+		 * (https://httpd.apache.org/docs/trunk/mod/mod_ssl.html#sslsessiontickets):
+		 *
+		 * "Using them without restarting the web server
+		 * with an appropriate frequency (e.g. daily)
+		 * compromises perfect forward secrecy."
+		 *
+		 * Disable tickets due to the potential to
+		 * interfere with perfect forward secrecy.
+		 */
 		SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
 #endif
-
-		/* Enable TLS_FALLBACK_SCSV as a POODLE mitigation */
-		SSL_CTX_set_mode(ctx, SSL_MODE_SEND_FALLBACK_SCSV);
 	}
 
 	/* Server-only settings */
@@ -94,7 +102,7 @@ SSL_CTX *M_tls_ctx_init(M_bool is_server)
 			SSL_CTX_free(ctx);
 			return NULL;
 		}
-		SSL_CTX_set_tmp_ecdh(ctx, ecdh); 
+		SSL_CTX_set_tmp_ecdh(ctx, ecdh);
 		EC_KEY_free(ecdh); /* Safe because of reference counts */
 #endif
 
@@ -104,6 +112,11 @@ SSL_CTX *M_tls_ctx_init(M_bool is_server)
 
 	/* Enable non-blocking support properly */
 	SSL_CTX_set_mode(ctx, SSL_MODE_ENABLE_PARTIAL_WRITE|SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+
+	/* Read Ahead appears to actually cause a performance regression.  It also changes
+	 * some of the symantics of the calls which could hide bugs, so do not enable
+	 * SSL_CTX_set_read_ahead(ctx, 1);
+	 */
 
 	/* XXX: should we enable SSL_OP_ALL to be more compatible? */
 
@@ -195,33 +208,142 @@ void M_tls_ctx_destroy(SSL_CTX *ctx)
 }
 
 
-M_bool M_tls_ctx_set_protocols(SSL_CTX *ctx, int protocols /* M_tls_protocols_t bitmap */)
+#if OPENSSL_VERSION_NUMBER >= 0x1010100fL && !defined(LIBRESSL_VERSION_NUMBER)
+static M_bool M_tls_protocols_to_openssl(int protocols, M_tls_protocols_t *proto_min, M_tls_protocols_t *proto_max)
 {
+	/* Find the min protocol. */
+	if (protocols & M_TLS_PROTOCOL_TLSv1_0) {
+		*proto_min = TLS1_VERSION;
+	} else if (protocols & M_TLS_PROTOCOL_TLSv1_1) {
+		*proto_min = TLS1_1_VERSION;
+	} else if (protocols & M_TLS_PROTOCOL_TLSv1_2) {
+		*proto_min = TLS1_2_VERSION;
+	} else if (protocols & M_TLS_PROTOCOL_TLSv1_3) {
+		*proto_min = TLS1_3_VERSION;
+	} else {
+		return M_FALSE;
+	}
+
+	/* Find the max protocol. */
+	if (protocols & M_TLS_PROTOCOL_TLSv1_3) {
+		*proto_max = TLS1_3_VERSION;
+	} else if (protocols & M_TLS_PROTOCOL_TLSv1_2) {
+		*proto_max = TLS1_2_VERSION;
+	} else if (protocols & M_TLS_PROTOCOL_TLSv1_1) {
+		*proto_max = TLS1_1_VERSION;
+	} else if (protocols & M_TLS_PROTOCOL_TLSv1_0) {
+		*proto_max = TLS1_VERSION;
+	} else {
+		return M_FALSE;
+	}
+
+	/* Ensure the range is valid. */
+	if (*proto_min > *proto_max)
+		return M_FALSE;
+
+	return M_TRUE;
+}
+#else
+/* Openssl inverse, protocol to disable. */
+static M_bool M_tls_protocols_to_openssl(int protocols, unsigned long *no_protocols)
+{
+	unsigned long     disabled = 0;
+	M_tls_protocols_t min      = M_TLS_PROTOCOL_TLSv1_0;
+	M_tls_protocols_t max      = M_TLS_PROTOCOL_TLSv1_2;
+
+	/* INVALID! Only 1.3 enabled and not supported by this openssl version. */
+	if (protocols == M_TLS_PROTOCOL_TLSv1_3)
+		return M_FALSE;
+
+	/* Find the min protocol. */
+	if (protocols & M_TLS_PROTOCOL_TLSv1_0) {
+		min = M_TLS_PROTOCOL_TLSv1_0;
+	} else if (protocols & M_TLS_PROTOCOL_TLSv1_1) {
+		min = M_TLS_PROTOCOL_TLSv1_1;
+	} else if (protocols & M_TLS_PROTOCOL_TLSv1_2) {
+		min = M_TLS_PROTOCOL_TLSv1_2;
+	} else {
+		return M_FALSE;
+	}
+
+	/* Find the max protocol. */
+	if (protocols & M_TLS_PROTOCOL_TLSv1_2) {
+		max = M_TLS_PROTOCOL_TLSv1_2;
+	} else if (protocols & M_TLS_PROTOCOL_TLSv1_1) {
+		max = M_TLS_PROTOCOL_TLSv1_1;
+	} else if (protocols & M_TLS_PROTOCOL_TLSv1_0) {
+		max = M_TLS_PROTOCOL_TLSv1_0;
+	} else {
+		return M_FALSE;
+	}
+
+	/* Ensure the range is valid. */
+	if (min > max)
+		return M_FALSE;
+
+	/* Fill in the gaps. */
+	protocols = min;
+	while (protocols < max) { /* Max will be included in result. */
+		protocols |= protocols << 1;
+	}
+
+	/* Disable anything before min and after max. */
+	if (!(protocols & M_TLS_PROTOCOL_TLSv1_0))
+		disabled |= SSL_OP_NO_TLSv1;
+	if (!(protocols & M_TLS_PROTOCOL_TLSv1_1))
+		disabled |= SSL_OP_NO_TLSv1_1;
+	if (!(protocols & M_TLS_PROTOCOL_TLSv1_2))
+		disabled |= SSL_OP_NO_TLSv1_2;
+
 	/* Always disable SSLv2 and SSLv3 */
-	unsigned long options = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3;
+	*no_protocols  = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3;
+	*no_protocols |= disabled;
 
-	/* Set defaults */
-	if (protocols == M_TLS_PROTOCOL_DEFAULT)
-		protocols = M_TLS_PROTOCOL_TLSv1_0 | M_TLS_PROTOCOL_TLSv1_1 | M_TLS_PROTOCOL_TLSv1_2;
+	return M_TRUE;
+}
+#endif
 
-	/* Openssl takes the inverse, so disable protocols that aren't set */
-	if (!(protocols & M_TLS_PROTOCOL_TLSv1_0)) {
-		options |= SSL_OP_NO_TLSv1;
-	}
-	if (!(protocols & M_TLS_PROTOCOL_TLSv1_1)) {
-		options |= SSL_OP_NO_TLSv1_1;
-	}
-	if (!(protocols & M_TLS_PROTOCOL_TLSv1_2)) {
-		options |= SSL_OP_NO_TLSv1_2;
-	}
+
+M_bool M_tls_ctx_set_protocols(SSL_CTX *ctx, int protocols)
+{
+	unsigned long     options   = 0;
+	unsigned long     disabled  = 0;
+	M_tls_protocols_t proto_min = 0;
+	M_tls_protocols_t proto_max = 0;
 
 	if (ctx == NULL)
 		return M_FALSE;
 
-#if OPENSSL_VERSION_NUMBER < 0x1010000fL || defined(LIBRESSL_VERSION_NUMBER)
-	SSL_CTX_set_options(ctx, (long)options);
+	if (protocols == M_TLS_PROTOCOL_INVALID)
+		return M_FALSE;
+
+	/* Protocol 0 is an aliase for default. */
+	if (protocols == 0)
+		protocols = M_TLS_PROTOCOL_DEFAULT;
+
+#if OPENSSL_VERSION_NUMBER >= 0x1010100fL && !defined(LIBRESSL_VERSION_NUMBER)
+	(void)options;
+	(void)disabled;
+
+	if (!M_tls_protocols_to_openssl(protocols, &proto_min, &proto_max))
+		return M_FALSE;
+
+	SSL_CTX_set_min_proto_version(ctx, proto_min);
+	SSL_CTX_set_max_proto_version(ctx, proto_max);
 #else
+	(void)proto_min;
+	(void)proto_max;
+
+	/* Openssl takes the inverse, so this disables protocols that aren't set. */
+	if (!M_tls_protocols_to_openssl(protocols, &disabled))
+		return M_FALSE;
+	options |= disabled;
+
+#  if OPENSSL_VERSION_NUMBER < 0x1010000fL || defined(LIBRESSL_VERSION_NUMBER)
+	SSL_CTX_set_options(ctx, (long)options);
+#  else
 	SSL_CTX_set_options(ctx, options);
+#  endif
 #endif
 
 	return M_TRUE;
@@ -230,19 +352,79 @@ M_bool M_tls_ctx_set_protocols(SSL_CTX *ctx, int protocols /* M_tls_protocols_t 
 
 M_bool M_tls_ctx_set_ciphers(SSL_CTX *ctx, const char *ciphers)
 {
+	M_list_str_t  *v1_0_1_2     = NULL;
+	M_list_str_t  *v1_3         = NULL;
+	char          *out_v1_0_1_2 = NULL;
+	char          *out_v1_3     = NULL;
+	char         **parts        = NULL;
+	size_t         num_parts    = 0;
+	M_bool         ret          = M_TRUE;
+	size_t         i;
+
 	if (ctx == NULL || M_str_isempty(ciphers))
 		return M_FALSE;
 
-	if (SSL_CTX_set_cipher_list(ctx, ciphers) == 0)
-		return M_FALSE;
+	v1_0_1_2 = M_list_str_create(M_LIST_STR_NONE);
+	v1_3     = M_list_str_create(M_LIST_STR_NONE);
 
-	return M_TRUE;
+	parts = M_str_explode_str(':', ciphers, &num_parts);
+	if (parts == NULL || num_parts == 0) {
+		ret = M_FALSE;
+		goto done;
+	}
+
+	for (i=0; i<num_parts; i++) {
+		if (M_str_caseeq_start(parts[i], "TLS_")) {
+			M_list_str_insert(v1_3, parts[i]);
+		} else {
+			M_list_str_insert(v1_0_1_2, parts[i]);
+		}
+	}
+
+	out_v1_0_1_2 = M_list_str_join(v1_0_1_2, ':');
+	out_v1_3     = M_list_str_join(v1_3, ':');
+
+#if OPENSSL_VERSION_NUMBER >= 0x1010100fL && !defined(LIBRESSL_VERSION_NUMBER)
+	if (M_str_isempty(out_v1_0_1_2) && M_str_isempty(out_v1_3)) {
+		ret = M_FALSE;
+		goto done;
+	}
+#else
+	if (M_str_isempty(out_v1_0_1_2)) {
+		ret = M_FALSE;
+		goto done;
+	}
+#endif
+
+	if (!M_str_isempty(out_v1_0_1_2)) {
+		if (SSL_CTX_set_cipher_list(ctx, out_v1_0_1_2) == 0) {
+			ret = M_FALSE;
+			goto done;
+		}
+	}
+
+#if OPENSSL_VERSION_NUMBER >= 0x1010100fL && !defined(LIBRESSL_VERSION_NUMBER)
+	if (!M_str_isempty(out_v1_3)) {
+		if (SSL_CTX_set_ciphersuites(ctx, out_v1_3) == 0) {
+			ret = M_FALSE;
+			goto done;
+		}
+	}
+#endif
+
+done:
+	M_str_explode_free(parts, num_parts);
+	M_free(out_v1_0_1_2);
+	M_free(out_v1_3);
+	M_list_str_destroy(v1_0_1_2);
+	M_list_str_destroy(v1_3);
+	return ret;
 }
 
 
 static M_bool M_tls_ctx_set_cert_chain(SSL_CTX *ctx, const unsigned char *data, size_t data_len, M_bool is_intermediate, X509 **x509_out)
 {
-	BIO                 *bio; 
+	BIO                 *bio;
 	STACK_OF(X509_INFO) *sk;
 	int                  i;
 	size_t               count = 0;
@@ -376,7 +558,7 @@ M_bool M_tls_ctx_load_os_trust(SSL_CTX *ctx)
 		/* DER-encoded
  		 *
  		 * CFDataGetLength will be auto converted to long by
-		 * the compiler (this is not undefined behavior). */ 
+		 * the compiler (this is not undefined behavior). */
 		data = CFDataGetBytePtr(dref);
 		x509 = d2i_X509(NULL, &data, CFDataGetLength(dref));
 		CFRelease(dref);
@@ -427,7 +609,7 @@ M_bool M_tls_ctx_load_os_trust(SSL_CTX *ctx)
 	CertCloseStore(hStore, 0);
 
 	return M_TRUE;
-} 
+}
 
 #else /* Unix */
 
@@ -491,7 +673,7 @@ M_bool M_tls_ctx_set_x509trust(SSL_CTX *ctx, STACK_OF(X509) *trustlist)
 
 M_bool M_tls_ctx_set_trust_ca(SSL_CTX *ctx, STACK_OF(X509) *trustlist_cache, const unsigned char *ca, size_t len)
 {
-	BIO                 *bio; 
+	BIO                 *bio;
 	STACK_OF(X509_INFO) *sk;
 	X509_STORE          *store;
 	int                  i;

@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -64,7 +64,7 @@ static M_str_int_retval_t M_str_to_uint64_int(const char *s, size_t len, unsigne
 	M_bool        overflow  = M_FALSE;
 	unsigned char digit;
 
-	if (base < 2 || base > 35) {
+	if (base < 2 || base > 36) {
 		if (endptr)
 			*endptr = s;
 		if (val)

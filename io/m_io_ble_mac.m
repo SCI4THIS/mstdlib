@@ -1,17 +1,17 @@
 /* The MIT License (MIT)
- * 
- * Copyright (c) 2018 Main Street Softworks, Inc.
- * 
+ *
+ * Copyright (c) 2018 Monetra Technologies, LLC.
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -46,7 +46,7 @@
  * 7. M_io_ble_device_read_data attempts to lock the io layer.
  * 8. We have a dead lock because M_io_ble_device_read_data has
  *    the ble lock which M_io_ble_close needs in order to release
- *    the io layer lock but that can't happen until M_io_ble_device_read_data 
+ *    the io layer lock but that can't happen until M_io_ble_device_read_data
  *    release the ble lock but it can't until ...
  *
  * To deal with this we have a destroy and close runner event functions
@@ -70,6 +70,12 @@ static void M_io_ble_connect_runner(M_event_t *event, M_event_type_t type, M_io_
 
 	if (arg == NULL)
 		return;
+
+	handle->initalized_timer = NULL;
+	if (!M_io_ble_initalized()) {
+		handle->initalized_timer = M_event_timer_oneshot(event, 50, M_TRUE, M_io_ble_connect_runner, handle);
+		return;
+	}
 
 	M_io_ble_connect(handle);
 }
@@ -207,7 +213,7 @@ M_io_error_t M_io_ble_write_cb(M_io_layer_t *layer, const unsigned char *buf, si
 	const_temp = NULL;
 	M_hash_multi_u64_get_str(mdata, M_IO_BLE_META_KEY_CHARACTERISTIC_UUID, &const_temp) || M_str_isempty(const_temp);
 	characteristic_uuid = const_temp;
-	
+
 	/* Get the type of write being requested. */
 	if (!M_hash_multi_u64_get_int(mdata, M_IO_BLE_META_KEY_WRITE_TYPE, &i64v))
 		i64v = 0;
@@ -252,7 +258,7 @@ M_io_error_t M_io_ble_write_cb(M_io_layer_t *layer, const unsigned char *buf, si
 	 * and we can write that means we weren't able to get the ble lock and we
 	 * a retry is needed. */
 	if ((ret == M_IO_ERROR_SUCCESS && type == M_IO_BLE_WTYPE_WRITENORESP) || (ret == M_IO_ERROR_WOULDBLOCK && handle->can_write))
-		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_WRITE);
+		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_WRITE, M_IO_ERROR_SUCCESS);
 
 	return ret;
 }
@@ -264,7 +270,7 @@ M_io_error_t M_io_ble_read_cb(M_io_layer_t *layer, unsigned char *buf, size_t *r
 	M_llist_node_t   *node;
 	M_io_ble_rdata_t *rdata;
 
-	/* Validae we have a meta object. If not we don't know what to do. */
+	/* Validate we have a meta object. If not we don't know what to do. */
 	if (meta == NULL)
 		return M_IO_ERROR_INVALID;
 
@@ -292,20 +298,18 @@ M_io_error_t M_io_ble_read_cb(M_io_layer_t *layer, unsigned char *buf, size_t *r
 	M_hash_multi_u64_insert_int(mdata, M_IO_BLE_META_KEY_READ_TYPE, rdata->type);
 	switch (rdata->type) {
 		case M_IO_BLE_RTYPE_READ:
-			if (buf == NULL || read_len == NULL) {
-				return M_IO_ERROR_INVALID;
-			}
-
 			/* Set the service and characteristic uuids for where the data came from. */
 			M_hash_multi_u64_insert_str(mdata, M_IO_BLE_META_KEY_SERVICE_UUID, rdata->d.read.service_uuid);
 			M_hash_multi_u64_insert_str(mdata, M_IO_BLE_META_KEY_CHARACTERISTIC_UUID, rdata->d.read.characteristic_uuid);
 
 			/* Read as much data as we can. */
-			if (*read_len > M_buf_len(rdata->d.read.data))
-				*read_len = M_buf_len(rdata->d.read.data);
+			if (buf != NULL && read_len != NULL) {
+				if (*read_len > M_buf_len(rdata->d.read.data))
+					*read_len = M_buf_len(rdata->d.read.data);
 
-			M_mem_copy(buf, M_buf_peek(rdata->d.read.data), *read_len);
-			M_buf_drop(rdata->d.read.data, *read_len);
+				M_mem_copy(buf, M_buf_peek(rdata->d.read.data), *read_len);
+				M_buf_drop(rdata->d.read.data, *read_len);
+			}
 
 			/* If we've read everything we will drop this record. */
 			if (M_buf_len(rdata->d.read.data) == 0) {
@@ -340,16 +344,18 @@ static void M_io_ble_timer_cb(M_event_t *event, M_event_type_t type, M_io_t *dum
 	/* Lock! */
 	layer = M_io_layer_acquire(handle->io, 0, NULL);
 
-	handle->timer = NULL;
+	M_event_timer_remove(handle->initalized_timer);
+	handle->initalized_timer = NULL;
+	handle->timer            = NULL;
 
 	if (handle->state == M_IO_STATE_CONNECTING) {
 		handle->state = M_IO_STATE_ERROR;
 		M_snprintf(handle->error, sizeof(handle->error), "Timeout waiting on connect");
-		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_ERROR);
+		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_ERROR, M_IO_ERROR_WOULDBLOCK);
 	} else if (handle->state == M_IO_STATE_DISCONNECTING) {
 		M_io_ble_close(handle);
 		handle->state = M_IO_STATE_DISCONNECTED;
-		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_DISCONNECTED);
+		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_DISCONNECTED, M_IO_ERROR_DISCONNECT);
 	} else {
 		/* Shouldn't ever happen */
 	}
@@ -403,12 +409,12 @@ M_bool M_io_ble_init_cb(M_io_layer_t *layer)
 			break;
 		case M_IO_STATE_CONNECTED:
 			/* Trigger connected soft event when registered with event handle */
-			M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_CONNECTED);
+			M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_CONNECTED, M_IO_ERROR_SUCCESS);
 			handle->can_write = M_TRUE;
 
 			/* If there is data in the read buffer, signal there is data to be read as well */
 			if (M_llist_len(handle->read_queue) != 0) {
-				M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_READ);
+				M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_READ, M_IO_ERROR_SUCCESS);
 			}
 			break;
 		default:

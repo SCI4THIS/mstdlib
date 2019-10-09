@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -201,7 +201,7 @@ M_API int M_uint64_count_digits(M_uint64 num);
  * \param[in] x value to count bits in
  * \return      number of set (1) bits in \a x
  */
-M_uint8 M_uint8_popcount(M_uint8 x);
+M_API M_uint8 M_uint8_popcount(M_uint8 x);
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */

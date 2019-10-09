@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  *
- * Copyright (c) 2017 Main Street Softworks, Inc.
+ * Copyright (c) 2017 Monetra Technologies, LLC.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -188,7 +188,7 @@ static void M_io_net_timeout_cb(M_event_t *event, M_event_type_t type, M_io_t *c
 
 	M_io_net_handle_close(io, handle);
 
-	M_io_layer_softevent_add(layer, M_FALSE, M_EVENT_TYPE_ERROR);
+	M_io_layer_softevent_add(layer, M_FALSE, M_EVENT_TYPE_ERROR, M_io_net_resolve_error_sys(handle->data.net.last_error_sys));
 	M_event_timer_stop(handle->timer);
 }
 
@@ -285,7 +285,7 @@ static void M_io_net_readwrite_err(M_io_t *comm, M_io_layer_t *layer, M_bool is_
 	M_io_handle_t *handle = M_io_layer_get_handle(layer);
 	M_event_t     *event  = M_io_get_event(comm);
 
-	if (err == M_IO_ERROR_WOULDBLOCK || (err == M_IO_ERROR_SUCCESS && request_len >= out_len)) { /* >= to account for known complete reads by layer */
+	if (err == M_IO_ERROR_WOULDBLOCK || (err == M_IO_ERROR_SUCCESS && request_len >= out_len)) { /* If we requested more than we got, then we need more! (that said, for historic reasons we are using >=, shouldn't hurt, but not sure if it is right) */
 		/* Start waiting on more READ (or WRITE) events */
 		M_event_handle_modify(event, M_EVENT_MODTYPE_ADD_WAITTYPE, comm, handle->data.net.evhandle, handle->data.net.sock, is_read?M_EVENT_WAIT_READ:M_EVENT_WAIT_WRITE, 0);
 	} else if (err == M_IO_ERROR_SUCCESS) {
@@ -529,11 +529,11 @@ static M_bool M_io_net_process_cb(M_io_layer_t *layer, M_event_type_t *type)
 			case M_EVENT_TYPE_ERROR:        /* This might be emitted on error */
 				arglen = (socklen_t)sizeof(handle->data.net.last_error_sys);
 #ifdef _WIN32
-				if (getsockopt(handle->data.net.sock, SOL_SOCKET, SO_ERROR, (char *)&handle->data.net.last_error_sys, &arglen) < 0) {
+				if (getsockopt(handle->data.net.sock, SOL_SOCKET, SO_ERROR, (char *)&handle->data.net.last_error_sys, &arglen) == 0) {
 #else
-				if (getsockopt(handle->data.net.sock, SOL_SOCKET, SO_ERROR, &handle->data.net.last_error_sys, &arglen) < 0) {
+				if (getsockopt(handle->data.net.sock, SOL_SOCKET, SO_ERROR, &handle->data.net.last_error_sys, &arglen) == 0) {
 #endif
-					M_io_net_resolve_error(handle);
+					handle->data.net.last_error = M_io_net_resolve_error_sys(handle->data.net.last_error_sys);
 				}
 
 				if (*type == M_EVENT_TYPE_WRITE && handle->data.net.last_error_sys == 0) {
@@ -563,6 +563,7 @@ static M_bool M_io_net_process_cb(M_io_layer_t *layer, M_event_type_t *type)
 				*type         = M_EVENT_TYPE_ERROR;
 				handle->state = M_IO_NET_STATE_ERROR;
 				M_io_net_handle_close(comm, handle);
+				M_io_set_error(comm, handle->data.net.last_error);
 				return M_FALSE;
 
 			default:
@@ -571,7 +572,6 @@ static M_bool M_io_net_process_cb(M_io_layer_t *layer, M_event_type_t *type)
 				return M_TRUE;
 		}
 	}
-
 
 	/* Attempting to listen */
 	if (ctype == M_IO_TYPE_LISTENER) {
@@ -612,6 +612,7 @@ static M_bool M_io_net_process_cb(M_io_layer_t *layer, M_event_type_t *type)
 		}
 	}
 
+
 	switch (*type) {
 		case M_EVENT_TYPE_CONNECTED:
 			M_io_net_set_sockopts(handle);
@@ -619,13 +620,16 @@ static M_bool M_io_net_process_cb(M_io_layer_t *layer, M_event_type_t *type)
 		case M_EVENT_TYPE_ERROR:
 			if (handle->state == M_IO_NET_STATE_CONNECTED && handle->data.net.last_error_sys == 0) {
 				/* No way to *really* know the error, use the reset by peer error */
+				/* NOTE: really? couldn't we getsockopt(handle->data.net.sock, SOL_SOCKET, SO_ERROR, ...) like we do for connect errors? */
 #ifdef _WIN32
 				handle->data.net.last_error_sys = WSAECONNRESET;
 #else
 				handle->data.net.last_error_sys = ECONNRESET;
 #endif
 			}
-			handle->state = M_IO_NET_STATE_ERROR;
+			handle->state               = M_IO_NET_STATE_ERROR;
+			handle->data.net.last_error = M_io_net_resolve_error_sys(handle->data.net.last_error_sys);
+			M_io_set_error(comm, handle->data.net.last_error);
 			/* DO NOT close handle automatically, user will do so. */
 			break;
 		case M_EVENT_TYPE_DISCONNECTED:
@@ -647,7 +651,6 @@ static M_bool M_io_net_process_cb(M_io_layer_t *layer, M_event_type_t *type)
 		default:
 			break;
 	}
-
 
 
 	/* Pass event on to next layer */
@@ -971,7 +974,7 @@ static M_bool M_io_net_start_connect(M_io_layer_t *layer, struct sockaddr *peer,
 #else
 		handle->data.net.evhandle = handle->data.net.sock;
 #endif
-		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_CONNECTED);
+		M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_CONNECTED, M_IO_ERROR_SUCCESS);
 		M_event_handle_modify(event, M_EVENT_MODTYPE_ADD_HANDLE, io, handle->data.net.evhandle, handle->data.net.sock, M_EVENT_WAIT_READ, M_EVENT_CAPS_READ|M_EVENT_CAPS_WRITE);
 		return M_TRUE;
 	}
@@ -1003,7 +1006,7 @@ static M_bool M_io_net_stream_init_cb(M_io_layer_t *layer)
 	handle->timer = M_event_timer_add(event, M_io_net_timeout_cb, layer);
 
 	if (handle->state == M_IO_NET_STATE_CONNECTED) {
-		M_io_layer_softevent_add(layer, M_FALSE, M_EVENT_TYPE_CONNECTED);
+		M_io_layer_softevent_add(layer, M_FALSE, M_EVENT_TYPE_CONNECTED, M_IO_ERROR_SUCCESS);
 		M_event_handle_modify(event, M_EVENT_MODTYPE_ADD_HANDLE, comm, handle->data.net.evhandle, handle->data.net.sock, M_EVENT_WAIT_READ, M_EVENT_CAPS_READ|M_EVENT_CAPS_WRITE);
 		return M_TRUE;
 	}
@@ -1026,7 +1029,7 @@ static M_bool M_io_net_stream_init_cb(M_io_layer_t *layer)
 		}
 		if (!M_io_net_start_connect(layer, peer, peer_size, type)) {
 			/* If we can't start to connect, trigger an error immediately */
-			M_io_layer_softevent_add(layer, M_FALSE, M_EVENT_TYPE_ERROR);
+			M_io_layer_softevent_add(layer, M_FALSE, M_EVENT_TYPE_ERROR, handle->data.net.last_error);
 			M_free(peer);
 			return M_TRUE;
 		}
@@ -1122,6 +1125,7 @@ static void M_io_net_unregister_cb(M_io_layer_t *layer)
 static M_io_state_t M_io_net_state_cb(M_io_layer_t *layer)
 {
 	M_io_handle_t *handle = M_io_layer_get_handle(layer);
+
 	switch (handle->state) {
 		case M_IO_NET_STATE_INIT:
 			return M_IO_STATE_INIT;
@@ -1147,17 +1151,21 @@ static M_io_state_t M_io_net_state_cb(M_io_layer_t *layer)
 static M_bool M_io_net_errormsg_cb(M_io_layer_t *layer, char *error, size_t err_len)
 {
 	M_io_handle_t *handle = M_io_layer_get_handle(layer);
+	M_bool         rv;
 
 	if (handle->state == M_IO_NET_STATE_DISCONNECTED) {
 		M_snprintf(error, err_len, "Gracefully Closed Connection");
-		return M_TRUE;
-	}
+		rv = M_TRUE;
+	} else {
 
 #ifdef _WIN32
-	return M_io_win32_errormsg(handle->data.net.last_error_sys, error, err_len);
+		rv = M_io_win32_errormsg(handle->data.net.last_error_sys, error, err_len);
 #else
-	return M_io_posix_errormsg(handle->data.net.last_error_sys, error, err_len);
+		rv = M_io_posix_errormsg(handle->data.net.last_error_sys, error, err_len);
 #endif
+	}
+
+	return rv;
 }
 
 

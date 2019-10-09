@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -449,16 +449,13 @@ M_bool M_buf_add_bytes_hex(M_buf_t *buf, const char *hex_bytes)
 
 void M_buf_add_str_transform(M_buf_t *buf, M_uint32 transform_type, const char *str)
 {
-	size_t str_length;
+	M_buf_add_str_max_transform(buf, transform_type, str, M_str_len(str));
+}
 
-	if (buf == NULL)
-		return;
 
-	str_length = M_str_len(str);
-	if (str_length == 0)
-		return;
-
-	M_buf_add_bytes_transform(buf, transform_type, str, str_length);
+void M_buf_add_str_max_transform(M_buf_t *buf, M_uint32 transform_type, const char *str, size_t max)
+{
+	M_buf_add_bytes_transform(buf, transform_type, str, M_MIN(M_str_len(str), max));
 }
 
 
@@ -467,6 +464,16 @@ void M_buf_add_str(M_buf_t *buf, const char *str)
 	M_buf_add_str_transform(buf, M_BUF_TRANSFORM_NONE, str);
 }
 
+void M_buf_add_str_max(M_buf_t *buf, const char *str, size_t max)
+{
+	size_t len;
+
+	if (buf == NULL || M_str_isempty(str) || max == 0)
+		return;
+
+	len = M_MIN(M_str_len(str), max);
+	M_buf_add_bytes(buf, str, len);
+}
 
 void M_buf_add_str_hex(M_buf_t *buf, const void *bytes, size_t len)
 {

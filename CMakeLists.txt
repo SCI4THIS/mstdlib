@@ -5,7 +5,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMakeModules/")
 include(DefaultBuildType)
 
 project(Mstdlib
-	VERSION   1.4.0
+	VERSION   1.8.0
 	LANGUAGES C
 )
 
@@ -59,6 +59,7 @@ option(MSTDLIB_BUILD_FORMATS   "Build formats module"                           
 option(MSTDLIB_BUILD_THREAD    "Build thread module"                               TRUE)
 option(MSTDLIB_BUILD_IO        "Build io module"                                   TRUE)
 option(MSTDLIB_BUILD_TLS       "Build tls module"                                  TRUE)
+option(MSTDLIB_BUILD_NET       "Build net module"                                  TRUE)
 option(MSTDLIB_BUILD_LOG       "Build log module"                                  TRUE)
 option(MSTDLIB_BUILD_SQL       "Build sql module"                                  TRUE)
 
@@ -477,6 +478,14 @@ else ()
 	set(MSTDLIB_BUILD_TLS FALSE CACHE BOOL "" FORCE)
 endif ()
 
+if (MSTDLIB_BUILD_NET AND MSTDLIB_BUILD_FORMATS AND MSTDLIB_BUILD_THREAD AND MSTDLIB_BUILD_IO AND MSTDLIB_BUILD_TLS)
+	message(STATUS "Building MSTDLIB net... Enabled")
+	add_subdirectory(net)
+else ()
+	message(STATUS "Building MSTDLIB net... Disabled")
+	set(MSTDLIB_BUILD_NET FALSE CACHE BOOL "" FORCE)
+endif ()
+
 if (MSTDLIB_BUILD_LOG AND MSTDLIB_BUILD_THREAD AND MSTDLIB_BUILD_IO)
 	message(STATUS "Building MSTDLIB log... Enabled")
 	add_subdirectory(log)
@@ -583,7 +592,7 @@ if (MSTDLIB_INSTALL_LIBS AND (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR
 	endif ()
 	set(CPACK_VERBATIM_VARIABLES TRUE)
 
-	set(CPACK_PACKAGE_VENDOR              "Main Street Softworks")
+	set(CPACK_PACKAGE_VENDOR              "Monetra Technologies")
 	set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "M Standard Library (mstdlib)")
 	set(CPACK_RESOURCE_FILE_README        "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
 

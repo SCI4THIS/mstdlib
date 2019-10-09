@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -419,10 +419,10 @@ void *M_mem_rmem(const void *haystack, size_t haystack_len, const void *needle, 
 	if (needle == NULL || needle_len == 0)
 		return M_CAST_OFF_CONST(void *, haystack);
 
-	if (haystack_len > needle_len)
+	if (needle_len > haystack_len)
 		return NULL;
 
-	for (i=haystack_len-needle_len; i-->0; ) {
+	for (i=haystack_len-needle_len+1; i-->0; ) {
 		if (M_mem_eq((const M_uint8 *)haystack+i, needle, needle_len)) {
 			ret = (const M_uint8 *)haystack + i;
 			break;

@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -308,7 +308,7 @@ M_API M_bool M_buf_add_bytes_hex(M_buf_t *buf, const char *hex_bytes);
 M_API void M_buf_add_char(M_buf_t *buf, char c);
 
 
-/*! Append a C string (zero or more bytes terminated with a NUL) to a buffer.
+/*! Append a C string (zero or more bytes terminated with a NULL) to a buffer.
  *
  * The NUL is not appended.
  *
@@ -316,6 +316,17 @@ M_API void M_buf_add_char(M_buf_t *buf, char c);
  * \param[in]     str String to append.
  */
 M_API void M_buf_add_str(M_buf_t *buf, const char *str);
+
+
+/*! Append a C string up to the NUL terminator or max bytes (which ever is smaller) to a buffer.
+ *
+ * The NUL is not appended.
+ *
+ * \param[in,out] buf Buffer.
+ * \param[in]     str String to append.
+ * \param[in]     max Maximum number of bytes to add.
+ */
+M_API void M_buf_add_str_max(M_buf_t *buf, const char *str, size_t max);
 
 
 /*! Append the given bytes to the buffer as a hex-encoded string.
@@ -366,6 +377,19 @@ M_API size_t M_buf_add_str_lines(M_buf_t *buf, const char *str, size_t max_lines
  * \param[in]     str            String to append.
  */
 M_API void M_buf_add_str_transform(M_buf_t *buf, M_uint32 transform_type, const char *str);
+
+
+/*! Append a C string (zero or more bytes terminated with a NUL) to a buffer up to
+ *  max size, transform the data as specified.
+ *
+ * The NUL is not appended.
+ *
+ * \param[in,out] buf            Buffer.
+ * \param[in]     transform_type Type of transformation to perform, bitmap field of enum M_BUF_TRANSFORM_TYPE
+ * \param[in]     str            String to append.
+ * \param[in]     max            Max length to append.
+ */
+M_API void M_buf_add_str_max_transform(M_buf_t *buf, M_uint32 transform_type, const char *str, size_t max);
 
 
 /*! Append a C string (zero or more bytes terminated with a NUL) to a buffer, ensuring all characters of the string
@@ -666,9 +690,27 @@ M_API void M_buf_add_ptr(M_buf_t *buf, void *ptr);
 
 /*! Append a monetary amount to a buffer.
  *
+ * Input is a dollar amount with a 2 digit decimal value using '.' to separate dollar
+ * and cents. A '.' is used for the decimal portion. The input is _not_ implied decimal.
+ * Only the first two decimal digits are evaluated. Everything after is truncated.
+ * The amount will be added as implied decimal. Negative symbol will be added if value is negative.
+ *
+ * E.g. 
+ *
+ *     in  -> "12.00"
+ *     out -> 1200
+ *     in  -> "12.1001"
+ *     out -> 1210
+ *     in  -> "-12.0"
+ *     out -> -1200
+ *     in  -> "-12."
+ *     out -> -1200
+ *     in  -> "12"
+ *     out -> 1200
+ *
  * \param[in,out] buf       Buffer.
- * \param[in]     amount    Monetary amount to append.
- * \param[in]     max_width Maximum width of field.
+ * \param[in]     amount    Monetary amount to append. Not implied decimal.
+ * \param[in]     max_width Maximum width of field. Number of digits output.
  *
  * \return M_FALSE on error (probably truncation), M_TRUE otherwise.
  */
@@ -676,6 +718,26 @@ M_API M_bool M_buf_add_money(M_buf_t *buf, const char *amount, size_t max_width)
 
 
 /*! Append a monetary amount to a buffer, adding a decimal point.
+ *
+ * Input is a dollar amount with a 2 digit decimal value using '.' to separate dollar
+ * and cents. A '.' is used for the decimal portion. The input is _not_ implied decimal.
+ * Only the first two decimal digits are evaluated. Everything after is truncated.
+ * The amount will be added with a decimal. Negative symbol will be added if value is negative.
+ *
+ * This function is used to ensure a properly formatted monetary value.
+ *
+ * E.g. 
+ *
+ *     in  -> "12.00"
+ *     out -> 12.00
+ *     in  -> "12.1001"
+ *     out -> 12.10
+ *     in  -> "-12.0"
+ *     out -> -12.00
+ *     in  -> "-12."
+ *     out -> -12.00
+ *     in  -> "12"
+ *     out -> 12.00
  *
  * \param[in,out] buf       Buffer.
  * \param[in]     amount    Monetary amount to append.
@@ -693,6 +755,8 @@ M_API M_bool M_buf_add_money_dot(M_buf_t *buf, const char *amount, size_t max_wi
  * \param[in]     max_width Maximum width of field.
  *
  * \return M_FALSE on error (probably truncation), otherwise M_TRUE.
+ *
+ * \see M_buf_add_money
  */
 M_API M_bool M_buf_add_money_just(M_buf_t *buf, const char *amount, size_t max_width) M_WARN_UNUSED_RESULT;
 
@@ -705,6 +769,8 @@ M_API M_bool M_buf_add_money_just(M_buf_t *buf, const char *amount, size_t max_w
  * \param[in]     max_width Maximum width of field.
  *
  * \return M_FALSE on error (probably truncation), otherwise M_TRUE.
+ *
+ * \see M_buf_add_money_dot
  */
 M_API M_bool M_buf_add_money_dot_just(M_buf_t *buf, const char *amount, size_t max_width) M_WARN_UNUSED_RESULT;
 

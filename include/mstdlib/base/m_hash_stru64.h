@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2017 Main Street Softworks, Inc.
+ * Copyright (c) 2017 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -162,6 +162,15 @@ M_API M_uint64 M_hash_stru64_get_direct(const M_hash_stru64_t *h, const char *ke
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+/*! Wether the hashtable a multi value table.
+ *
+ * \param[in] h Hashtable being referenced.
+ *
+ * \return M_TRUE if a multi value hashtable.
+ */
+M_bool M_hash_stru64_is_multi(const M_hash_stru64_t *h);
+
 
 /*! Get the number of values for a given key.
  *

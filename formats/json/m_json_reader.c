@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2015 Main Street Softworks, Inc.
+ * Copyright (c) 2015 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -445,7 +445,7 @@ static M_json_node_t *M_json_read_string(M_parser_t *parser, M_uint32 flags, M_j
 
 	out  = M_buf_finish_str(buf, NULL);
 	node = M_json_node_create(M_JSON_TYPE_STRING);
-	M_json_set_string(node, out);
+	M_json_set_string(node, M_str_safe(out));
 	M_free(out);
 
 	return node;

@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2017 Main Street Softworks, Inc.
+ * Copyright (c) 2017 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -242,6 +242,17 @@ typedef enum {
 
 	M_SQL_ERROR_UNSET                = 999   /*!< Error message not set. Internal use only. */
 } M_sql_error_t;
+
+/*! Possible SQL data types */
+typedef enum {
+	M_SQL_DATA_TYPE_UNKNOWN = 0, /*!< Not Known, not yet set, most likely an error */
+	M_SQL_DATA_TYPE_BOOL    = 1, /*!< Implemented as an 8bit integer */
+	M_SQL_DATA_TYPE_INT16   = 2, /*!< 16bit signed integer */
+	M_SQL_DATA_TYPE_INT32   = 3, /*!< 32bit signed integer */
+	M_SQL_DATA_TYPE_INT64   = 4, /*!< 64bit signed integer */
+	M_SQL_DATA_TYPE_TEXT    = 5, /*!< Textual data type such as VARCHAR or TEXT, with possible length */
+	M_SQL_DATA_TYPE_BINARY  = 6  /*!< Binary data type such as BLOB or BINARY, with possible length */
+} M_sql_data_type_t;
 
 
 /*! Retrieve generic error string associated with error code.
@@ -762,6 +773,18 @@ typedef enum {
  */ 
 M_API M_bool M_sql_query_append_bitop(M_sql_connpool_t *pool, M_buf_t *query, M_sql_query_bitop_t op, const char *exp1, const char *exp2);
 
+
+/*! It may be necessary to know the data type name mapping for an mstdlib datatype.
+ *  This function can be used to retrieve that value.  Data types may differ depending
+ *  on an operation.  For instance, MySQL can use VARCHAR for column creation but only
+ *  CHAR for CAST operations 
+ *  \param[in]     pool       Initialized #M_sql_connpool_t object
+ *  \param[in,out] query      A pointer to an already populated M_buf_t with a partial request.
+ *  \param[in]     type       mstdlib datatype
+ *  \param[in]     max_len    Maximum length of data type if a TEXT or BINARY type.
+ *  \param[in]     is_cast    If this datatype is used during a CAST operation.
+ */
+M_API void M_sql_query_append_datatype(M_sql_connpool_t *pool, M_buf_t *query, M_sql_data_type_t type, size_t max_len, M_bool is_cast);
 
 /*! @} */
 

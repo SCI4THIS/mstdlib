@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2017 Main Street Softworks, Inc.
+ * Copyright (c) 2017 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -187,6 +187,15 @@ M_API M_sql_report_cberror_t M_sql_report_cell_cb_int2dec(M_sql_stmt_t *stmt, vo
  *  If the cell is NULL, a blank column will be output instead of 0.00000
  */
 M_API M_sql_report_cberror_t M_sql_report_cell_cb_int5dec(M_sql_stmt_t *stmt, void *arg, const char *name, size_t row, ssize_t col, M_buf_t *buf, M_bool *is_null);
+
+/*! Callback template for outputting an integer column stored with a 5-digit implied decimal point as an actual
+ *  decimal with between 2 and 5 decimal places.  E.g.:
+ *   -  1 -> 0.00001
+ *   -  123000 -> 1.23
+ *   -  111111 -> 1.11111
+ *  If the cell is NULL, a blank column will be output instead of 0.00000
+ */
+M_API M_sql_report_cberror_t M_sql_report_cell_cb_int5min2dec(M_sql_stmt_t *stmt, void *arg, const char *name, size_t row, ssize_t col, M_buf_t *buf, M_bool *is_null);
 
 /*! Callback template for outputting a boolean value column with yes or no.
  *

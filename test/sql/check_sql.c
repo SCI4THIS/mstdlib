@@ -305,37 +305,16 @@ static M_sql_error_t check_sql_trans(M_sql_trans_t *trans, void *arg, char *erro
 	return err;
 }
 
-/* XXX: Additional needed checks:
- *      - multiple blobs per row
- *      - make sure strings aren't truncated on the right when they have trailing spaces
- *      - key conflicts return right codes
- *      - largish blobs are handled properly.
- *      - rollbacks/deadlocks work (multithreaded test?)
- */
-
-START_TEST(check_sql)
+static M_sql_connpool_t *check_connect_pool(void)
 {
-	M_sql_error_t     err;
 	M_sql_connpool_t *pool    = NULL;
-	char              error[256];
-	M_sql_stmt_t     *stmt;
-	M_sql_report_t   *report  = M_sql_report_create(M_SQL_REPORT_FLAG_PASSTHRU_UNLISTED);
-	M_sql_table_t    *table   = NULL;
-	char             *out     = NULL;
-	size_t            out_len = 0;
-	M_csv_t          *csv     = NULL;
-	char              temp[64];
-	size_t            i;
 	const char       *driver;
 	const char       *conn_str;
 	const char       *sql_conns;
 	const char       *username;
 	const char       *password;
-	M_uint8          *hugedata;
-	M_int64           hugedataid;
-	const M_uint8    *outbincol;
-	size_t            outbincol_size;
-
+	M_sql_error_t     err;
+	char              error[256];
 
 	driver    = getenv("SQL_DRIVER");
 	conn_str  = getenv("SQL_CONN_STR");
@@ -376,6 +355,38 @@ START_TEST(check_sql)
 	ck_assert_msg(err == M_SQL_ERROR_SUCCESS, "M_sql_connpool_start failed: %s: %s", M_sql_error_string(err), error);
 
 	M_printf("SQL Server Version: %s\n", M_sql_connpool_server_version(pool));
+
+	return pool;
+}
+
+/* XXX: Additional needed checks:
+ *      - multiple blobs per row
+ *      - make sure strings aren't truncated on the right when they have trailing spaces
+ *      - key conflicts return right codes
+ *      - largish blobs are handled properly.
+ *      - rollbacks/deadlocks work (multithreaded test?)
+ */
+
+START_TEST(check_sql)
+{
+	M_sql_error_t     err;
+	M_sql_connpool_t *pool    = NULL;
+	char              error[256];
+	M_sql_stmt_t     *stmt;
+	M_sql_report_t   *report  = M_sql_report_create(M_SQL_REPORT_FLAG_PASSTHRU_UNLISTED);
+	M_sql_table_t    *table   = NULL;
+	char             *out     = NULL;
+	size_t            out_len = 0;
+	M_csv_t          *csv     = NULL;
+	char              temp[64];
+	size_t            i;
+	M_uint8          *hugedata;
+	M_int64           hugedataid;
+	const M_uint8    *outbincol;
+	size_t            outbincol_size;
+
+
+	pool = check_connect_pool();
 
 	if (M_sql_table_exists(pool, "foo")) {
 		stmt = M_sql_stmt_create();
@@ -549,6 +560,145 @@ START_TEST(check_sql)
 }
 END_TEST
 
+
+static M_bool fetch_dict(M_sql_tabledata_field_t *field, const char *field_name, M_bool is_add, void *thunk)
+{
+	M_hash_dict_t *dict = thunk;
+	const char    *val  = NULL;
+
+	(void)is_add;
+
+	if (!M_hash_dict_get(dict, field_name, &val))
+		return M_FALSE;
+
+	if (field != NULL) {
+		M_sql_tabledata_field_set_text_const(field, val);
+	}
+	return M_TRUE;
+}
+
+static void print_table(M_sql_connpool_t *pool, const char *tablename)
+{
+	M_sql_stmt_t   *stmt    = M_sql_stmt_create();
+	M_buf_t        *request = M_buf_create();
+	M_sql_error_t   err;
+	M_sql_report_t *report  = M_sql_report_create(M_SQL_REPORT_FLAG_PASSTHRU_UNLISTED);
+	char           *out     = NULL;
+	size_t          out_len = 0;
+	char            error[256];
+
+	M_buf_add_str(request, "SELECT * FROM \"");
+	M_buf_add_str(request, tablename);
+	M_buf_add_str(request, "\"");
+	err     = M_sql_stmt_prepare_buf(stmt, request);
+	request = NULL;
+	ck_assert_msg(err == M_SQL_ERROR_SUCCESS, "M_sql_stmt_prepare(SELECT) failed: %s: %s", M_sql_error_string(err), M_sql_stmt_get_error_string(stmt));
+	err     = M_sql_stmt_execute(pool, stmt);
+	ck_assert_msg(err == M_SQL_ERROR_SUCCESS, "M_sql_stmt_execute(SELECT) failed: %s: %s", M_sql_error_string(err), M_sql_stmt_get_error_string(stmt));
+
+	err = M_sql_report_process(report, stmt, NULL, &out, &out_len, error, sizeof(error));
+	M_sql_stmt_destroy(stmt);
+	M_sql_report_destroy(report);
+	ck_assert_msg(err == M_SQL_ERROR_SUCCESS, "M_sql_report_process() failed: %s: %s", M_sql_error_string(err), error);
+#if defined(DEBUG)
+	M_printf("===================================================================================================\n");
+	M_printf("Table: %s\n", tablename);
+	M_printf("%s", out);
+	M_printf("===================================================================================================\n");
+#endif
+	M_free(out);
+}
+
+
+START_TEST(check_tabledata)
+{
+	M_sql_error_t     err;
+	M_sql_connpool_t *pool    = NULL;
+	char              error[256];
+	char              temp[256];
+	M_int64           id      = 0;
+	M_sql_tabledata_t td[] = {
+		{ "key",  "id",   18,  M_SQL_DATA_TYPE_INT64, M_SQL_TABLEDATA_FLAG_ID|M_SQL_TABLEDATA_FLAG_ID_GENERATE|M_SQL_TABLEDATA_FLAG_ID_REQUIRED, NULL },
+		{ "col1", "col1", 0,   M_SQL_DATA_TYPE_INT32, M_SQL_TABLEDATA_FLAG_EDITABLE,                                                             NULL },
+		{ "col2", "col2", 32,  M_SQL_DATA_TYPE_TEXT,  0,                                                                                         NULL },
+		{ "col3", "tag1", 128, M_SQL_DATA_TYPE_TEXT,  M_SQL_TABLEDATA_FLAG_EDITABLE|M_SQL_TABLEDATA_FLAG_VIRTUAL,                                NULL },
+		{ "col3", "tag2", 128, M_SQL_DATA_TYPE_TEXT,  M_SQL_TABLEDATA_FLAG_EDITABLE|M_SQL_TABLEDATA_FLAG_VIRTUAL,                                NULL },
+		{ "col3", "tag3", 128, M_SQL_DATA_TYPE_TEXT,  M_SQL_TABLEDATA_FLAG_VIRTUAL,                                                              NULL },
+		{ "col4", "col4", 32,  M_SQL_DATA_TYPE_TEXT,  M_SQL_TABLEDATA_FLAG_EDITABLE,                                                             NULL }
+	};
+	M_hash_dict_t *dict;
+	M_sql_stmt_t  *stmt;
+	M_sql_table_t *table   = NULL;
+
+	pool = check_connect_pool();
+
+	if (M_sql_table_exists(pool, "foo")) {
+		stmt = M_sql_stmt_create();
+		err  = M_sql_stmt_prepare(stmt, "DROP TABLE \"foo\"");
+		ck_assert_msg(err == M_SQL_ERROR_SUCCESS, "M_sql_stmt_prepare(DROP TABLE) failed: %s: %s", M_sql_error_string(err), M_sql_stmt_get_error_string(stmt));
+		err  = M_sql_stmt_execute(pool, stmt);
+		ck_assert_msg(err == M_SQL_ERROR_SUCCESS, "M_sql_trans_execute(DROP TABLE) failed: %s: %s", M_sql_error_string(err), M_sql_stmt_get_error_string(stmt));
+		M_sql_stmt_destroy(stmt);
+	}
+
+	/* Create Schema */
+	table = M_sql_table_create("foo");
+	ck_assert_msg(table != NULL, "M_sql_table_create() failed");
+	ck_assert_msg(M_sql_table_add_col(table, M_SQL_TABLE_COL_FLAG_NONE, "key",        M_SQL_DATA_TYPE_INT64,     0,              NULL), "M_sql_table_add_col(key) failed");
+	ck_assert_msg(M_sql_table_add_col(table, M_SQL_TABLE_COL_FLAG_NONE, "col1",       M_SQL_DATA_TYPE_INT32,     0,              NULL), "M_sql_table_add_col(col1) failed");
+	ck_assert_msg(M_sql_table_add_col(table, M_SQL_TABLE_COL_FLAG_NONE, "col2",       M_SQL_DATA_TYPE_TEXT,     32,              NULL), "M_sql_table_add_col(col2) failed");
+	ck_assert_msg(M_sql_table_add_col(table, M_SQL_TABLE_COL_FLAG_NONE, "col3",       M_SQL_DATA_TYPE_TEXT,  65535,              NULL), "M_sql_table_add_col(col3) failed");
+	ck_assert_msg(M_sql_table_add_col(table, M_SQL_TABLE_COL_FLAG_NONE, "col4",       M_SQL_DATA_TYPE_TEXT,     32,              NULL), "M_sql_table_add_col(col4) failed");
+	ck_assert_msg(M_sql_table_add_pk_col(table, "key"), "M_sql_table_add_pk_col(key) failed");
+	err = M_sql_table_execute(pool, table, error, sizeof(error));
+	ck_assert_msg(err == M_SQL_ERROR_SUCCESS, "M_sql_table_execute() failed: %s", error);
+	M_sql_table_destroy(table);
+	print_table(pool, "foo");
+
+	/* Create table.  Do not specify tag2 or col4 to make sure they are blank */
+	dict = M_hash_dict_create(16, 75, M_HASH_DICT_CASECMP);
+	M_hash_dict_insert(dict, "col1", "123");
+	M_hash_dict_insert(dict, "col2", "my column 2");
+	M_hash_dict_insert(dict, "tag1", "tag 1 value");
+	M_hash_dict_insert(dict, "tag3", "tag 3 value");
+	err = M_sql_tabledata_add(pool, "foo", td, sizeof(td)/sizeof(*td), fetch_dict, dict, &id, error, sizeof(error));
+	ck_assert_msg(err == M_SQL_ERROR_SUCCESS, "M_sql_tabledata_add() failed: %s", error);
+	print_table(pool, "foo");
+
+	/* Edit table, but don't change any values, should return M_SQL_ERROR_USER_SUCCESS to indicate nothing changed */
+	M_snprintf(temp, sizeof(temp), "%lld", id);
+	M_hash_dict_insert(dict, "id", temp);
+	err = M_sql_tabledata_edit(pool, "foo", td, sizeof(td)/sizeof(*td), fetch_dict, NULL, dict, error, sizeof(error));
+	ck_assert_msg(err == M_SQL_ERROR_USER_SUCCESS, "M_sql_tabledata_edit(1) expected to return no rows modified, returned: %s", error);
+	print_table(pool,"foo");
+
+	/* Remove some other columns so that the current values are kept without specifying, and set 'tag2' which was not previously set */
+	M_hash_dict_remove(dict, "col1");
+	M_hash_dict_remove(dict, "col2");
+	M_hash_dict_remove(dict, "tag1");
+	M_hash_dict_remove(dict, "tag3");
+	M_hash_dict_insert(dict, "tag2", "added tag 2 after!");
+	err = M_sql_tabledata_edit(pool, "foo", td, sizeof(td)/sizeof(*td), fetch_dict, NULL, dict, error, sizeof(error));
+	ck_assert_msg(err == M_SQL_ERROR_SUCCESS, "M_sql_tabledata_edit(2) expected to return row modified, returned: %s", error);
+	print_table(pool, "foo");
+
+	/* Add non-virtual column 4*/
+	M_hash_dict_remove(dict, "tag2");
+	M_hash_dict_insert(dict, "col4", "added this col later!");
+	err = M_sql_tabledata_edit(pool, "foo", td, sizeof(td)/sizeof(*td), fetch_dict, NULL, dict, error, sizeof(error));
+	ck_assert_msg(err == M_SQL_ERROR_SUCCESS, "M_sql_tabledata_edit(3) expected to return row modified, returned: %s", error);
+	print_table(pool, "foo");
+
+	/* Close connections */
+	ck_assert_msg(M_sql_connpool_destroy(pool) == M_SQL_ERROR_SUCCESS, "M_sql_connpool_destroy() failed");
+
+	M_hash_dict_destroy(dict);
+	/* Free any internally allocated memory for mstdlib */
+	M_library_cleanup();
+}
+END_TEST
+
+
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static Suite *sql_suite(void)
@@ -561,6 +711,7 @@ static Suite *sql_suite(void)
 	tc = tcase_create("sql");
 	tcase_set_timeout(tc, 30);
 	tcase_add_test(tc, check_sql);
+	tcase_add_test(tc, check_tabledata);
 	suite_add_tcase(suite, tc);
 
 	return suite;

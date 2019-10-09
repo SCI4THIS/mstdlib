@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  * 
- * Copyright (c) 2018 Main Street Softworks, Inc.
+ * Copyright (c) 2018 Monetra Technologies, LLC.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +24,12 @@
 #import <Foundation/Foundation.h>
 #import <CoreBluetooth/CoreBluetooth.h>
 
+typedef enum {
+	M_IO_BLE_MAC_POWERED_UNKNOWN = 0,
+	M_IO_BLE_MAC_POWERED_ON,
+	M_IO_BLE_MAC_POWERED_OFF
+} M_io_ble_mac_powered_t;
+
 @interface ScanTrigger: NSObject
 
 + (id)scanTrigger:(M_event_trigger_t *)trigger timer:(NSTimer *)timer;
@@ -36,6 +42,10 @@
 
 
 @interface M_io_ble_mac_manager: NSObject <CBCentralManagerDelegate, CBPeripheralDelegate>
+
+@property (readonly) BOOL                   initialized;
+@property (readonly) M_io_ble_mac_powered_t powered;
+@property (readonly) BOOL                   state_up;
 
 + (id)m_io_ble_mac_manager;
 - (id)init;

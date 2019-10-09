@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  *
- * Copyright (c) 2017 Main Street Softworks, Inc.
+ * Copyright (c) 2017 Monetra Technologies, LLC.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -136,15 +136,21 @@ static M_bool hid_enum_has_driver(HDEVINFO hDevInfo, SP_DEVINFO_DATA *devinfo)
 {
 	char               classname[256];
 	char               drivername[256];
-	static const char *hidclass = "HIDClass";
+	static const char *hidclasses[]    = { "HIDClass", "HidMsr", NULL };
+	size_t             i;
 
 	M_mem_set(classname, 0, sizeof(classname));
 	M_mem_set(drivername, 0, sizeof(drivername));
 	if (!SetupDiGetDeviceRegistryPropertyA(hDevInfo, devinfo, SPDRP_CLASS, NULL, (PBYTE)classname, sizeof(classname)-1, NULL))
 		return M_FALSE;
 
-	/* Validate the class is "HIDClass", otherwise its an error (we don't want keyboards and mice) */
-	if (!M_str_eq(hidclass, classname))
+	/* Validate the class is one we want, specifically we want to exclude keyboards and mice */
+	for (i=0; hidclasses[i] != NULL; i++) {
+		if (M_str_caseeq(hidclasses[i], classname))
+			break;
+	}
+
+	if (hidclasses[i] == NULL) /* Not recognized */
 		return M_FALSE;
 
 	if (!SetupDiGetDeviceRegistryPropertyA(hDevInfo, devinfo, SPDRP_DRIVER, NULL, (PBYTE)drivername, sizeof(drivername)-1, NULL))
