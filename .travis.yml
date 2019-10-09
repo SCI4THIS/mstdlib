@@ -110,7 +110,7 @@ jobs:
 install:
   - |
     if [ "$TRAVIS_OS_NAME" = "osx" ]; then
-      brew update --quite
+      brew update --quiet
       brew install openssl doxygen mariadb-connector-c libiodbc libpq check c-ares sqlite llvm
       brew link --force --overwrite llvm
       export PATH="/usr/local/opt/llvm/bin:$PATH"
