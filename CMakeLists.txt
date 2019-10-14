@@ -62,6 +62,7 @@ option(MSTDLIB_BUILD_TLS       "Build tls module"                               
 option(MSTDLIB_BUILD_NET       "Build net module"                                  TRUE)
 option(MSTDLIB_BUILD_LOG       "Build log module"                                  TRUE)
 option(MSTDLIB_BUILD_SQL       "Build sql module"                                  TRUE)
+option(MSTDLIB_BUILD_TEXT      "Build text module"                                 TRUE)
 
 mark_as_advanced(FORCE MSTDLIB_INSTALL_EXPORTS)
 
@@ -448,13 +449,6 @@ else ()
 	message(STATUS "Building MSTDLIB backtrace ... Disabled")
 endif ()
 
-if (MSTDLIB_BUILD_FORMATS)
-	message(STATUS "Building MSTDLIB formats ... Enabled")
-	add_subdirectory(formats)
-else ()
-	message(STATUS "Building MSTDLIB formats ... Disabled")
-endif ()
-
 if (MSTDLIB_BUILD_THREAD)
 	message(STATUS "Building MSTDLIB thread... Enabled")
 	add_subdirectory(thread)
@@ -462,7 +456,7 @@ else ()
 	message(STATUS "Building MSTDLIB thread... Disabled")
 endif ()
 
-if (MSTDLIB_BUILD_IO AND MSTDLIB_BUILD_THREAD)
+if (MSTDLIB_BUILD_IO AND MSTDLIB_BUILD_THREAD AND MSTDLIB_BUILD_TEXT)
 	message(STATUS "Building MSTDLIB io... Enabled")
 	add_subdirectory(io)
 else ()
@@ -494,12 +488,26 @@ else ()
 	set(MSTDLIB_BUILD_LOG FALSE CACHE BOOL "" FORCE)
 endif ()
 
-if (MSTDLIB_BUILD_SQL AND MSTDLIB_BUILD_THREAD)
+if (MSTDLIB_BUILD_SQL AND MSTDLIB_BUILD_THREAD AND MSTDLIB_BUILD_TEXT)
 	message(STATUS "Building MSTDLIB sql... Enabled")
 	add_subdirectory(sql)
 else ()
 	message(STATUS "Building MSTDLIB sql... Disabled")
 	set(MSTDLIB_BUILD_SQL FALSE CACHE BOOL "" FORCE)
+endif ()
+
+if (MSTDLIB_BUILD_TEXT)
+	message(STATUS "Building MSTDLIB text... Enabled")
+	add_subdirectory(text)
+else ()
+	message(STATUS "Building MSTDLIB text... Disabled")
+endif ()
+
+if (MSTDLIB_BUILD_FORMATS AND MSTDLIB_BUILD_TEXT)
+	message(STATUS "Building MSTDLIB formats ... Enabled")
+	add_subdirectory(formats)
+else ()
+	message(STATUS "Building MSTDLIB formats ... Disabled")
 endif ()
 
 # Tests need to check for the test frame work so it will handle enabled/disable itself.

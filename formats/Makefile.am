@@ -16,6 +16,16 @@ libmstdlib_formats_la_SOURCES =  \
 	ini/m_ini_settings.c         \
 	ini/m_ini_writer.c           \
 	\
+	http/m_http.c                \
+	http/m_http_body.c           \
+	http/m_http_chunk.c          \
+	http/m_http_header.c         \
+	http/m_http_headers.c        \
+	http/m_http_reader.c         \
+	http/m_http_simple_reader.c  \
+	http/m_http_simple_writer.c  \
+	http/m_http_uri.c            \
+	\
 	json/m_json.c \
 	json/m_json_jsonpath.c       \
 	json/m_json_reader.c         \
@@ -25,9 +35,12 @@ libmstdlib_formats_la_SOURCES =  \
 	settings/m_settings_reader.c \
 	settings/m_settings_writer.c \
 	\
-	time/m_mtzfile.c             \
+	table/m_table.c              \
+	table/m_table_csv.c          \
+	table/m_table_json.c         \
+	table/m_table_markdown.c     \
 	\
-	verify/m_verify.c            \
+	time/m_mtzfile.c             \
 	\
 	xml/m_xml.c                  \
 	xml/m_xml_entities.c         \
@@ -36,4 +49,4 @@ libmstdlib_formats_la_SOURCES =  \
 	xml/m_xml_xpath.c
 
 libmstdlib_formats_la_DEPENDENCIES = @ADD_OBJECTS@
-libmstdlib_formats_la_LIBADD = @ADD_OBJECTS@ $(top_builddir)/base/libmstdlib.la
+libmstdlib_formats_la_LIBADD = @ADD_OBJECTS@ $(top_builddir)/base/libmstdlib.la $(top_builddir)/text/libmstdlib_text.la

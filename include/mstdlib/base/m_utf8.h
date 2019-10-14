@@ -233,6 +233,17 @@ M_API M_utf8_error_t M_utf8_chr_at(const char *str, char *buf, size_t buf_size, 
  * @{
  */
 
+/*! Convert a code point to the equivalent upper case code point.
+ *
+ * \param[in]  cp       Code point to convert.
+ * \param[out] upper_cp Equivalent upper case code point. Or cp if
+ *                      there is no equivalent.
+ *
+ * \return Result.
+ */
+M_API M_utf8_error_t M_utf8_toupper_cp(M_uint32 cp, M_uint32 *upper_cp);
+
+
 /*! Read a utf-8 sequence converting to upper case.
  *
  * Output is _not_ NULL terminated.
@@ -246,7 +257,7 @@ M_API M_utf8_error_t M_utf8_chr_at(const char *str, char *buf, size_t buf_size, 
  *
  * \return Result.
  */
-M_API M_utf8_error_t M_utf8_get_chr_toupper(const char *str, char *buf, size_t buf_size, size_t *len, const char **next);
+M_API M_utf8_error_t M_utf8_toupper_chr(const char *str, char *buf, size_t buf_size, size_t *len, const char **next);
 
 
 /*! Read a utf-8 sequence into an M_buf_t converting to upper case.
@@ -258,18 +269,7 @@ M_API M_utf8_error_t M_utf8_get_chr_toupper(const char *str, char *buf, size_t b
  *
  * \return Result.
  */
-M_API M_utf8_error_t M_utf8_get_chr_toupper_buf(const char *str, M_buf_t *buf, const char **next);
-
-
-/*! Convert a code point to the equivalent upper case code point.
- *
- * \param[in]  cp       Code point to convert.
- * \param[out] upper_cp Equivalent upper case code point. Or cp if
- *                      there is no equivalent.
- *
- * \return Result.
- */
-M_API M_utf8_error_t M_utf8_cp_toupper(M_uint32 cp, M_uint32 *upper_cp);
+M_API M_utf8_error_t M_utf8_toupper_chr_buf(const char *str, M_buf_t *buf, const char **next);
 
 
 /*! Convert a utf-8 string to an upper case equivalent string.
@@ -291,6 +291,18 @@ M_API M_utf8_error_t M_utf8_toupper(const char *str, char **out);
  */
 M_API M_utf8_error_t M_utf8_toupper_buf(const char *str, M_buf_t *buf);
 
+
+/*! Convert a code point to the equivalent loer case code point.
+ *
+ * \param[in]  cp       Code point to convert.
+ * \param[out] lower_cp Equivalent lower case code point. Or cp if
+ *                      there is no equivalent.
+ *
+ * \return Result.
+ */
+M_API M_utf8_error_t M_utf8_tolower_cp(M_uint32 cp, M_uint32 *lower_cp);
+
+
 /*! Read a utf-8 sequence converting to lower case.
  *
  * Output is _not_ NULL terminated.
@@ -304,7 +316,7 @@ M_API M_utf8_error_t M_utf8_toupper_buf(const char *str, M_buf_t *buf);
  *
  * \return Result.
  */
-M_API M_utf8_error_t M_utf8_get_chr_tolower(const char *str, char *buf, size_t buf_size, size_t *len, const char **next);
+M_API M_utf8_error_t M_utf8_tolower_chr(const char *str, char *buf, size_t buf_size, size_t *len, const char **next);
 
 
 /*! Read a utf-8 sequence into an M_buf_t converting to lower case.
@@ -316,18 +328,7 @@ M_API M_utf8_error_t M_utf8_get_chr_tolower(const char *str, char *buf, size_t b
  *
  * \return Result.
  */
-M_API M_utf8_error_t M_utf8_get_chr_tolower_buf(const char *str, M_buf_t *buf, const char **next);
-
-
-/*! Convert a code point to the equivalent loer case code point.
- *
- * \param[in]  cp       Code point to convert.
- * \param[out] lower_cp Equivalent lower case code point. Or cp if
- *                      there is no equivalent.
- *
- * \return Result.
- */
-M_API M_utf8_error_t M_utf8_cp_tolower(M_uint32 cp, M_uint32 *lower_cp);
+M_API M_utf8_error_t M_utf8_tolower_chr_buf(const char *str, M_buf_t *buf, const char **next);
 
 
 /*! Convert a utf-8 string to an lower case equivalent string.
@@ -348,6 +349,240 @@ M_API M_utf8_error_t M_utf8_tolower(const char *str, char **out);
  * \return Result.
  */
 M_API M_utf8_error_t M_utf8_tolower_buf(const char *str, M_buf_t *buf);
+
+/*! @} */
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+/*! \addtogroup m_utf8_check Checking/Validation
+ *  \ingroup m_utf8
+ *
+ * UTF-8 Checking and Validation
+ *
+ * Validate if a UTF-8 sequence or string is comprised
+ * of a given type of characters.
+ * 
+ * @{
+ */
+
+/*! Checks for a lower-case code point.
+ *
+ * Derived Core Properties: Lowercase.
+ * -> General Category: Ll + Other_Lowercase
+ *
+ * \param[in] cp Code point.
+ *
+ * \return M_TRUE if lowercase. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_islower_cp(M_uint32 cp);
+
+
+/*! Checks if a utf-8 sequence is lower-case.
+ *
+ * \param[in]  str  utf-8 string.
+ * \param[out] next Start of next character. Will point to NULL terminator
+ *                  if last character.
+ *
+ * \return M_TRUE if lowercase. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_islower_chr(const char *str, const char **next);
+
+
+/*! Checks if a utf-8 string is lower-case.
+ *
+ * \param[in] str utf-8 string.
+ *
+ * \return M_TRUE if lowercase. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_islower(const char *str);
+
+
+/*! Checks for a upper-case code point.
+ *
+ * Derived Core Properties: Uppercase.
+ * -> General Category: Lu + Other_Uppercase
+ *
+ * \param[in] cp Code point.
+ *
+ * \return M_TRUE if uppercase. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_isupper_cp(M_uint32 cp);
+
+
+/*! Checks if a utf-8 sequence is upper-case.
+ *
+ * \param[in]  str  utf-8 string.
+ * \param[out] next Start of next character. Will point to NULL terminator
+ *                  if last character.
+ *
+ * \return M_TRUE if uppercase. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_isupper_chr(const char *str, const char **next);
+
+
+/*! Checks if a utf-8 string is upper-case.
+ *
+ * \param[in] str utf-8 string.
+ *
+ * \return M_TRUE if uppercase. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_isupper(const char *str);
+
+
+/*! Checks for an alphabetic cp.
+ *
+ * Derived Core Properties: Alphabetic.
+ * -> Lowercase + Uppercase + Lt + Lm + Lo + Nl + Other_Alphabetic
+ *
+ * \param[in] cp Code point.
+ *
+ * \return M_TRUE if alphabetic. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_isalpha_cp(M_uint32 cp);
+
+
+/*! Checks if a utf-8 sequence is alphabetic.
+ *
+ * \param[in]  str  utf-8 string.
+ * \param[out] next Start of next character. Will point to NULL terminator
+ *                  if last character.
+ *
+ * \return M_TRUE if alphabetic. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_isalpha_chr(const char *str, const char **next);
+
+
+/*! Checks if a utf-8 string is alphabetic.
+ *
+ * \param[in] str utf-8 string.
+ *
+ * \return M_TRUE if alphabetic. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_isalpha(const char *str);
+
+
+/*! Checks for an alphabetic or numeric cp.
+ *
+ * Alphabetic + Nd + Nl + No.
+ *
+ * \param[in] cp Code point.
+ *
+ * \return M_TRUE if alphanumeric. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_isalnum_cp(M_uint32 cp);
+
+
+/*! Checks if a utf-8 sequence is alphabetic or numeric.
+ *
+ * \param[in]  str  utf-8 string.
+ * \param[out] next Start of next character. Will point to NULL terminator
+ *                  if last character.
+ *
+ * \return M_TRUE if alphanumeric. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_isalnum_chr(const char *str, const char **next);
+
+
+/*! Checks if a utf-8 string is alphabetic or numeric.
+ *
+ * \param[in] str utf-8 string.
+ *
+ * \return M_TRUE if alphanumeric. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_isalnum(const char *str);
+
+
+/*! Checks for numeric code point.
+ *
+ * General Category: Nd, Nl, No
+ *
+ * \param[in] cp Code point.
+ *
+ * \return M_TRUE if numeric. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_isnum_cp(M_uint32 cp);
+
+
+/*! Checks if a utf-8 sequence is numeric.
+ *
+ * \param[in]  str  utf-8 string.
+ * \param[out] next Start of next character. Will point to NULL terminator
+ *                  if last character.
+ *
+ * \return M_TRUE if numeric. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_isnum_chr(const char *str, const char **next);
+
+
+/*! Checks if a utf-8 string is numeric.
+ *
+ * \param[in] str utf-8 string.
+ *
+ * \return M_TRUE if numeric. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_isnum(const char *str);
+
+
+/*! Checks for a control character code point.
+ *
+ * General Category: Cc
+ *
+ * \param[in] cp Code point.
+ *
+ * \return M_TRUE if control. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_iscntrl_cp(M_uint32 cp);
+
+
+/*! Checks if a utf-8 sequence is a control character.
+ *
+ * \param[in]  str  utf-8 string.
+ * \param[out] next Start of next character. Will point to NULL terminator
+ *                  if last character.
+ *
+ * \return M_TRUE if control. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_iscntrl_chr(const char *str, const char **next);
+
+
+/*! Checks if a utf-8 string is a control character.
+ *
+ * \param[in] str utf-8 string.
+ *
+ * \return M_TRUE if control. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_iscntrl(const char *str);
+
+
+/*! Checks for a punctuation code point.
+ *
+ * General Category: Pc + Pd + Ps + Pe + Pi + Pf + Po
+ *
+ * \param[in] cp Code point.
+ *
+ * \return M_TRUE if punctuation. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_ispunct_cp(M_uint32 cp);
+
+
+/*! Checks if a utf-8 sequence is punctuation.
+ *
+ * \param[in]  str  utf-8 string.
+ * \param[out] next Start of next character. Will point to NULL terminator
+ *                  if last character.
+ *
+ * \return M_TRUE if punctuation. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_ispunct_chr(const char *str, const char **next);
+
+
+/*! Checks if a utf-8 string is punctuation.
+ *
+ * \param[in] str utf-8 string.
+ *
+ * \return M_TRUE if punctuation. Otherwise M_FALSE.
+ */
+M_API M_bool M_utf8_ispunct(const char *str);
 
 /*! @} */
 

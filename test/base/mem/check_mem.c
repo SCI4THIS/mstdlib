@@ -114,6 +114,8 @@ START_TEST(check_realloc_resize_growing)
 	ck_assert(mem1 != mem2);
 	/* ensure expected content */
 	ck_assert_msg(M_mem_eq(mem2,temp,size-1));
+
+	M_free(mem2);
 }
 END_TEST
 
@@ -143,6 +145,8 @@ START_TEST(check_realloc_resize_shrinking)
 	ck_assert(mem1 != mem2);
 	/* ensure expected content */
 	ck_assert_msg(M_mem_eq(mem2,temp,size));
+
+	M_free(mem2);
 }
 END_TEST
 
@@ -628,7 +632,7 @@ int main(int argc, char **argv)
 	(void)argv;
 
 	sr = srunner_create(mem_suite());
-	srunner_set_log(sr, "check_mem.log");
+	if (getenv("CK_LOG_FILE_NAME")==NULL) srunner_set_log(sr, "check_mem.log");
 
 	srunner_run_all(sr, CK_NORMAL);
 	nf = srunner_ntests_failed(sr);

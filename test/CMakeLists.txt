@@ -79,7 +79,6 @@ set(tests
 	base/math/check_rand.c
 	base/math/check_round.c
 	base/mem/check_mem.c
-	base/textcodec/check_puny.c
 	base/time/check_time_fmt.c
 	base/time/check_time_tm.c
 	base/time/check_time_tz.c
@@ -96,7 +95,6 @@ if (MSTDLIB_BUILD_FORMATS)
 		formats/check_mtzfile.c
 		formats/check_settings.c
 		formats/check_table.c
-		formats/check_verify.c
 		formats/check_xml.c
 		formats/check_xml_entities.c
 	)
@@ -144,11 +142,18 @@ if(MSTDLIB_BUILD_TLS)
 		tls/check_tlsspeed.c
 	)
 endif()
-
-# tls
+# sql
 if(MSTDLIB_BUILD_SQL)
 	list(APPEND tests
 		sql/check_sql.c
+	)
+endif()
+# sql
+if(MSTDLIB_BUILD_TEXT)
+	list(APPEND tests
+		text/check_puny.c
+		text/check_re.c
+		text/check_verify.c
 	)
 endif()
 
@@ -174,6 +179,9 @@ if (TARGET Mstdlib::tls)
 endif ()
 if (TARGET Mstdlib::sql)
 	list(APPEND test_deps Mstdlib::sql)
+endif ()
+if (TARGET Mstdlib::text)
+	list(APPEND test_deps Mstdlib::text)
 endif ()
 if (UNIX AND NOT APPLE)
 	list(APPEND test_deps m)

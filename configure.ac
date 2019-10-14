@@ -15,7 +15,7 @@ dnl AC_PREFIX_DEFAULT([/usr/local])
 dnl headers
 AC_CONFIG_HEADERS([config.h])
 dnl generated files
-AC_CONFIG_FILES([Makefile include/Makefile base/Makefile formats/Makefile thread/Makefile io/Makefile tls/Makefile log/Makefile sql/Makefile sql/sqlite/Makefile sql/mysql/Makefile sql/postgresql/Makefile sql/oracle/Makefile sql/odbc/Makefile test/Makefile doc/Makefile Doxyfile])
+AC_CONFIG_FILES([Makefile include/Makefile base/Makefile text/Makefile formats/Makefile thread/Makefile io/Makefile tls/Makefile log/Makefile sql/Makefile sql/sqlite/Makefile sql/mysql/Makefile sql/postgresql/Makefile sql/oracle/Makefile sql/odbc/Makefile test/Makefile doc/Makefile Doxyfile])
 
 AC_USE_SYSTEM_EXTENSIONS
 dnl AC_PROG_CC([clang llvm-gcc gcc])
@@ -619,6 +619,17 @@ elif test "$pwnam" = "0" ; then
   AC_SUBST(HAVE_GETPWNAM_0)
 fi
 
+dnl
+dnl text
+dnl
+AC_ARG_ENABLE(mstdlib-text,
+	AC_HELP_STRING([--disable-mstdlib-text], [Disable building of mstdlib text subsystem]),
+	[ build_mstdlib_text=${enableval} ],
+	[ build_mstdlib_text=yes ])
+
+if test "${build_mstdlib_text}" = "yes" ; then
+	BUILD_SUBDIRS="${BUILD_SUBDIRS} text"
+fi
 
 dnl
 dnl formats
@@ -629,6 +640,10 @@ AC_ARG_ENABLE(mstdlib-formats,
 	[ build_mstdlib_formats=yes ])
 
 if test "${build_mstdlib_formats}" = "yes" ; then
+	if test "${build_mstdlib_text}" = "no" ; then
+		AC_MSG_ERROR(IO REQUIRES TEXT)
+	fi
+
 	BUILD_SUBDIRS="${BUILD_SUBDIRS} formats"
 fi
 
@@ -756,6 +771,9 @@ AC_ARG_ENABLE(mstdlib-io,
 if test "${build_mstdlib_io}" = "yes" ; then
 	if test "${build_mstdlib_thread}" = "no" ; then
 		AC_MSG_ERROR(IO REQUIRES THREAD)
+	fi
+	if test "${build_mstdlib_text}" = "no" ; then
+		AC_MSG_ERROR(IO REQUIRES TEXT)
 	fi
 
 	AC_CHECK_FUNC(kqueue, [ have_kqueue="yes" ], [ have_kqueue="no" ])
@@ -1076,6 +1094,7 @@ if test "${build_tests}" = "yes" ; then
 fi
 
 dnl Needed for determining which tests to build
+AM_CONDITIONAL([MSTDLIB_TEXT],        [ test $build_mstdlib_text = yes ])
 AM_CONDITIONAL([MSTDLIB_FORMATS],     [ test $build_mstdlib_formats = yes ])
 AM_CONDITIONAL([MSTDLIB_THREAD],      [ test $build_mstdlib_thread = yes ])
 AM_CONDITIONAL([MSTDLIB_IO],          [ test $build_mstdlib_io = yes ])
