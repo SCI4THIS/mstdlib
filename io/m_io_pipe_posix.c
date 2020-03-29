@@ -30,7 +30,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include "m_io_posix_common.h"
-
+#include "m_io_pipe_int.h"
 /* XXX: currently needed for M_io_setnonblock() which should be moved */
 #include "m_io_int.h"
 
@@ -39,6 +39,15 @@ struct M_io_handle {
 	int            last_error_sys;
 };
 
+
+M_EVENT_HANDLE M_io_pipe_get_fd(M_io_t *io)
+{
+	M_io_layer_t  *layer  = M_io_layer_acquire(io, 0, NULL);
+	M_io_handle_t *handle = M_io_layer_get_handle(layer);
+	M_EVENT_HANDLE fd     = handle->handle;
+	M_io_layer_release(layer);
+	return fd;
+}
 
 static M_bool M_io_pipe_init_cb(M_io_layer_t *layer)
 {
@@ -167,7 +176,7 @@ static M_bool M_io_pipe_process_cb(M_io_layer_t *layer, M_event_type_t *type)
 }
 
 
-M_io_error_t M_io_pipe_create(M_io_t **reader, M_io_t **writer)
+M_io_error_t M_io_pipe_create(M_uint32 flags, M_io_t **reader, M_io_t **writer)
 {
 	M_io_handle_t    *rhandle;
 	M_io_handle_t    *whandle;
@@ -184,11 +193,18 @@ M_io_error_t M_io_pipe_create(M_io_t **reader, M_io_t **writer)
 	if (pipe2(pipefds, O_CLOEXEC) == 0) {
 #else
 	if (pipe(pipefds) == 0) {
-		M_io_posix_fd_set_closeonexec(pipefds[0]);
-		M_io_posix_fd_set_closeonexec(pipefds[1]);
+		M_io_posix_fd_set_closeonexec(pipefds[0], M_TRUE);
+		M_io_posix_fd_set_closeonexec(pipefds[1], M_TRUE);
 #endif
 	} else {
 		return M_io_posix_err_to_ioerr(errno);
+	}
+
+	if (flags & M_IO_PIPE_INHERIT_READ) {
+		M_io_posix_fd_set_closeonexec(pipefds[0], M_FALSE);
+	}
+	if (flags & M_IO_PIPE_INHERIT_WRITE) {
+		M_io_posix_fd_set_closeonexec(pipefds[1], M_FALSE);
 	}
 
 	if (!M_io_setnonblock(pipefds[0]) || !M_io_setnonblock(pipefds[1])) {

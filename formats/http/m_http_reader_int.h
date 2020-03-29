@@ -50,9 +50,11 @@ struct M_http_reader {
 	M_http_reader_flags_t           flags;
 	void                           *thunk;
 	char                           *boundary;
+	size_t                          boundary_len;
 	M_http_reader_step_t            rstep;
 	M_http_data_format_t            data_type;
 	size_t                          header_len;
+	M_bool                          no_body_method;
 	M_bool                          have_body_len;
 	size_t                          body_len;
 	size_t                          body_len_seen;

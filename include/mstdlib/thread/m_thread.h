@@ -1,17 +1,17 @@
 /* The MIT License (MIT)
- * 
+ *
  * Copyright (c) 2015 Monetra Technologies, LLC.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -97,9 +97,9 @@ __BEGIN_DECLS
 
 /*! \addtogroup m_thread_common_main Thread System Initialization, Destruction, and Information
  *  \ingroup m_thread_common
- * 
+ *
  *  Thread System Initialization, Destruction, and Information
- * 
+ *
  *  @{
  */
 
@@ -152,7 +152,7 @@ M_API M_bool M_thread_active_model(M_thread_model_t *model, const char **model_n
  * Registered functions will be called in the order they were added.
  *
  * \param[in] destructor The function to register.
- * 
+ *
  * \return M_TRUE if the function was added. Otherwise M_FALSE. This can fail
  *         if the function was already registered. A function can only be
  *         registered once.
@@ -167,7 +167,7 @@ M_API M_bool M_thread_destructor_insert(void (*destructor)(void));
 M_API void M_thread_destructor_remove(void (*destructor)(void));
 
 
-/*! Thread-safe library cleanup. 
+/*! Thread-safe library cleanup.
  *
  *  Cleans up any initialized static/global members by the library.  Useful to
  *  be called at the end of program execution to free memory or other resources,
@@ -178,17 +178,17 @@ M_API void M_library_cleanup(void);
 
 
 /*! Registers a callback to be called during M_library_cleanup().
- * 
+ *
  *  There is no way to 'unregister' a callback, so it must be ensured the callback
  *  will remain valid until the end of program execution.
- * 
+ *
  * \param[in] cleanup_cb Callback to call for cleanup
  * \param[in] arg        Optional argument to be passed to the callback.
  */
 M_API void M_library_cleanup_register(void (*cleanup_cb)(void *arg), void *arg);
 
 
-/*! Get the number of actively running threads.
+/*! Get the number of actively running threads.  This count includes the main process thread.
  *
  * This count does not include the threads that have finished but are still joinable.
  *
@@ -199,7 +199,7 @@ M_API size_t M_thread_count(void);
 
 /*! Retrieve the count of CPU cores that are online and usable.  When using
  *  cooperative threading, only 1 cpu core is usable.
- * 
+ *
  * \return count of cores or 0 on failure.
  */
 M_API size_t M_thread_num_cpu_cores(void);
@@ -211,9 +211,9 @@ M_API size_t M_thread_num_cpu_cores(void);
 
 /*! \addtogroup m_thread_common_create Thread Creation and Management
  *  \ingroup m_thread_common
- * 
+ *
  *  Thread Creation and Management
- * 
+ *
  *  @{
  */
 
@@ -226,7 +226,6 @@ typedef M_uintptr M_threadid_t;
 /*! Thread attribute object used for thread creation. */
 struct M_thread_attr;
 typedef struct M_thread_attr M_thread_attr_t;
-
 
 
 
@@ -263,6 +262,38 @@ M_API M_bool M_thread_join(M_threadid_t id, void **value_ptr);
  */
 M_API M_threadid_t M_thread_self(void);
 
+/*! Minimum thread priority value */
+#define M_THREAD_PRIORITY_MIN 1
+
+/*! Normal thread priority value */
+#define M_THREAD_PRIORITY_NORMAL 5
+
+/*! Maximum thread priority value */
+#define M_THREAD_PRIORITY_MAX 9
+
+/*! Set the priority a given thread should be created with.
+ *
+ * \param[in] tid       ThreadID returned from M_thread_create() or M_thread_self()
+ * \param[in] priority  The priority to set.  Valid range is 1-9 with 1 being the
+ *                      lowest priority and 9 being the highest.  The default value
+ *                      is 5.  Some systems, like Linux, do not support thread scheduling
+ *                      in relation to the process as a whole, but rather the system as
+ *                      a whole, and therefore require RLIMIT_NICE to be configured on
+ *                      the process in order to successfully increase a thread's priority
+ *                      above '5'.
+ * \return M_TRUE on success, or M_FALSE on usage error
+ */
+M_API M_bool M_thread_set_priority(M_threadid_t tid, M_uint8 priority);
+
+/*! Set the processor to assign the thread to run on (aka affinity).  The range is
+ *  0 to M_thread_num_cpu_cores()-1, or -1 to unassign.
+ *
+ * \param[in] tid          ThreadID returned from M_thread_create() or M_thread_self()
+ * \param[in] processor_id -1 to unset prior value.
+ *                         Otherwise 0 to M_thread_num_cpu_cores()-1 is the valid range.
+ * \return M_TRUE on success, or M_FALSE on usage error */
+M_API M_bool M_thread_set_processor(M_threadid_t tid, int processor_id);
+
 
 /*! Sleep for the specified amount of time.
  *
@@ -285,7 +316,7 @@ M_API void M_thread_yield(M_bool force);
 
 /*! Create a thread attribute object.
  *
- * \return Thread attribute object. 
+ * \return Thread attribute object.
  */
 M_API M_thread_attr_t *M_thread_attr_create(void);
 
@@ -319,11 +350,14 @@ M_API size_t M_thread_attr_get_stack_size(const M_thread_attr_t *attr);
 
 /*! Get the priority a given thread should be created with.
  *
+ *  Thread priorities are 1-9, with 1 being the lowest priority and 9 being
+ *  the highest.  The default value is 5.
+ *
  * \param[in] attr Attribute object.
  *
- * \return The requested priority.
+ * \return The requested priority, or 0 on usage error.
  */
-M_API int M_thread_attr_get_priority(const M_thread_attr_t *attr);
+M_API M_uint8 M_thread_attr_get_priority(const M_thread_attr_t *attr);
 
 
 /*! Set whether a given thread should be created joinable.
@@ -347,10 +381,33 @@ M_API void M_thread_attr_set_stack_size(M_thread_attr_t *attr, size_t val);
 
 /*! Set the priority a given thread should be created with.
  *
- * \param[in] attr Attribute object.
- * \param[in] val  The value to set.
+ * \param[in] attr      Attribute object.
+ * \param[in] priority  The priority to set.  Valid range is 1-9 with 1 being the
+ *                      lowest priority and 9 being the highest.  The default value
+ *                      is 5.  Some systems, like Linux, do not support thread scheduling
+ *                      in relation to the process as a whole, but rather the system as
+ *                      a whole, and therefore require RLIMIT_NICE to be configured on
+ *                      the process in order to successfully increase a thread's priority
+ *                      above '5'.
+ * \return M_TRUE on success, or M_FALSE on usage error
  */
-M_API void M_thread_attr_set_priority(M_thread_attr_t *attr, int val);
+M_API M_bool M_thread_attr_set_priority(M_thread_attr_t *attr, M_uint8 priority);
+
+/*! Get the currently assigned processor for thread.
+ *
+ * \param[in] attr   Attribute object
+ * \return -1 if none specified, otherwise 0 to M_thread_num_cpu_cores()-1
+ */
+M_API int M_thread_attr_get_processor(const M_thread_attr_t *attr);
+
+/*! Set the processor to assign the thread to run on (aka affinity).  The range is
+ *  0 to M_thread_num_cpu_cores()-1.
+ *
+ * \param[in] attr         Attribute object
+ * \param[in] processor_id -1 to unset prior value.
+ *                         Otherwise 0 to M_thread_num_cpu_cores()-1 is the valid range.
+ * \return M_TRUE on success, or M_FALSE on usage error */
+M_API M_bool M_thread_attr_set_processor(M_thread_attr_t *attr, int processor_id);
 
 /*! @} */
 
@@ -359,9 +416,9 @@ M_API void M_thread_attr_set_priority(M_thread_attr_t *attr, int val);
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 /*! \addtogroup m_thread_common_mutex Thread Mutexes (Locks/Critical Sections)
  *  \ingroup m_thread_common
- * 
+ *
  *  Thread Mutexes (Locks/Critical Sections)
- * 
+ *
  *  @{
  */
 
@@ -378,7 +435,7 @@ typedef enum {
 } M_thread_mutexattr_t;
 
 
-/*! Mutex create. 
+/*! Mutex create.
  *
  * \param[in] attr M_thread_mutexattr_t attributes which control how the mutex should behave.
  *
@@ -434,9 +491,9 @@ M_API M_bool M_thread_mutex_unlock(M_thread_mutex_t *mutex);
 
 /*! \addtogroup m_thread_common_cond Thread Conditionals
  *  \ingroup m_thread_common
- * 
+ *
  *  Thread Conditionals
- * 
+ *
  *  @{
  */
 
@@ -454,7 +511,7 @@ typedef enum {
 
 
 
-/*! Conditional create. 
+/*! Conditional create.
  *
  * \param[in] attr M_thread_condattr_t attributes which control how the conditional should behave.
  *
@@ -497,7 +554,7 @@ M_API M_bool M_thread_cond_timedwait(M_thread_cond_t *cond, M_thread_mutex_t *mu
 M_API M_bool M_thread_cond_timedwait_abs(M_thread_cond_t *cond, M_thread_mutex_t *mutex, const M_timeval_t *abstime);
 
 
-/*! Wait on conditional 
+/*! Wait on conditional
  *
  * Blocks the thread until the conditional is activated.
  *
@@ -533,9 +590,9 @@ M_API void M_thread_cond_signal(M_thread_cond_t *cond);
 
 /*! \addtogroup m_thread_common_rwlock Read/Write locks
  *  \ingroup m_thread_common
- * 
+ *
  *  Read/Write locks
- * 
+ *
  *  @{
  */
 
@@ -551,7 +608,7 @@ typedef enum {
 } M_thread_rwlock_type_t;
 
 
-/*! Read/Write lock create. 
+/*! Read/Write lock create.
  *
  * Read/Write locks allow multiple readers to be hold the lock at the same time. A
  * write lock will be allowed once all readers have released their locks.
@@ -598,9 +655,9 @@ M_API M_bool M_thread_rwlock_unlock(M_thread_rwlock_t *rwlock);
 
 /*! \addtogroup m_thread_common_tls Thread Local Storage
  *  \ingroup m_thread_common
- * 
+ *
  *  Thread Local Storage
- * 
+ *
  *  @{
  */
 
@@ -643,9 +700,9 @@ M_API void *M_thread_tls_getspecific(M_thread_tls_key_t key);
 
 /*! \addtogroup m_thread_common_spinlock Spinlocks
  *  \ingroup m_thread_common
- * 
+ *
  *  Spinlocks
- * 
+ *
  *  @{
  */
 
@@ -661,8 +718,8 @@ typedef struct M_thread_spinlock {
 
 
 /*! Lock a spinlock.
- * 
- *  A spinlock is similar in usage to a mutex, but should NOT be used in place of a mutex. 
+ *
+ *  A spinlock is similar in usage to a mutex, but should NOT be used in place of a mutex.
  *  When in doubt, use a mutex instead, a spinlock is almost always the wrong thing to use.
  *  Spinlocks can be used protect areas of memory that are very unlikely to have high
  *  contention and should only be held for very short durations, or when the act of
@@ -686,7 +743,7 @@ M_API void M_thread_spinlock_lock(M_thread_spinlock_t *spinlock);
 
 
 /*! Unlock a spinlock
- * 
+ *
  *  See M_thread_spinlock_lock() for more information.
  *
  *  \param[in] spinlock Spinlock initialized via M_THREAD_SPINLOCK_STATIC_INITIALIZER
@@ -700,9 +757,9 @@ M_API void M_thread_spinlock_unlock(M_thread_spinlock_t *spinlock);
 
 /*! \addtogroup m_thread_common_once Threadsafe initialization helpers (Thread Once)
  *  \ingroup m_thread_common
- * 
+ *
  *  Threadsafe initialization helpers (Thread Once)
- * 
+ *
  *  @{
  */
 
@@ -734,7 +791,7 @@ typedef struct M_thread_once {
  *
  *  static M_thread_once_t initialized = M_THREAD_ONCE_STATIC_INITIALIZER;
  *  M_thread_once(&initialized, init_routine);
- * 
+ *
  *  \param[in] once_control Once control variable passed by reference, and first set
  *                          to M_THREAD_ONCE_STATIC_INITIALIZER;
  *  \param[in] init_routine Initialization routine to be called if it has not yet
@@ -747,7 +804,7 @@ M_API M_bool M_thread_once(M_thread_once_t *once_control, void (*init_routine)(M
 
 /*! Reset the once_control object back to an uninitialized state.  Useful to be
  *  called in a destructor so an initialization routine can be re-run.
- * 
+ *
  *  \param[in] once_control Once control variable passed by reference, and first set
  *                          to M_THREAD_ONCE_STATIC_INITIALIZER;
  *  \return M_TRUE if reset, M_FALSE if not initialized.

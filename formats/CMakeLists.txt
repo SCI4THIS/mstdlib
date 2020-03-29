@@ -11,6 +11,14 @@ set(sources
 	# csv:
 	csv/m_csv.c
 
+	# email:
+	email/m_email.c
+	email/m_email_common.c
+	email/m_email_simple_helpers.c
+	email/m_email_simple_reader.c
+	email/m_email_simple_writer.c
+	email/m_email_reader.c
+
 	# ini:
 	ini/m_ini.c
 	ini/m_ini_element.c

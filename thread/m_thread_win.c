@@ -1,17 +1,17 @@
 /* The MIT License (MIT)
- * 
+ *
  * Copyright (c) 2015 Monetra Technologies, LLC.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -67,14 +67,101 @@ static DWORD win32_abstime2msoffset(const M_timeval_t *abstime)
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-static M_thread_t *M_thread_win_create(M_threadid_t *id, const M_thread_attr_t *attr, void *(*func)(void *), void *arg)
+static M_bool M_thread_win_set_priority(M_thread_t *thread, M_threadid_t tid, M_uint8 mthread_priority)
 {
-	DWORD dwThreadId;
-	HANDLE hThread;
+	static const int win_priorities[7] = {
+		THREAD_PRIORITY_IDLE,
+		THREAD_PRIORITY_LOWEST,
+		THREAD_PRIORITY_BELOW_NORMAL,
+		THREAD_PRIORITY_NORMAL,
+		THREAD_PRIORITY_ABOVE_NORMAL,
+		THREAD_PRIORITY_HIGHEST,
+		THREAD_PRIORITY_TIME_CRITICAL
+	};
+	int     sys_priority_min = 0;
+	int     sys_priority_max = 6;
+	int     sys_priority_range;
+	int     mthread_priority_range;
+	double  priority_scale;
+	int     priority;
+	HANDLE  hThread;
 
-	if (id)
-		*id = 0;
+	(void)thread;
+
+	sys_priority_range     = (sys_priority_max - sys_priority_min) + 1;
+	mthread_priority_range = (M_THREAD_PRIORITY_MAX - M_THREAD_PRIORITY_MIN) + 1;
+	priority_scale         = ((double)sys_priority_range) / ((double)mthread_priority_range);
+
+	/* Lets handle min, max, and normal without scaling */
+	if (mthread_priority == M_THREAD_PRIORITY_MIN) {
+		priority = sys_priority_min;
+	} else if (mthread_priority == M_THREAD_PRIORITY_MAX) {
+		priority = sys_priority_max;
+	} else if (mthread_priority == M_THREAD_PRIORITY_NORMAL) {
+		priority = 3;
+	} else {
+		priority = sys_priority_min + (int)(((double)(mthread_priority - M_THREAD_PRIORITY_MIN)) * priority_scale);
+		if (priority > sys_priority_max)
+			priority = sys_priority_max;
+		if (priority < sys_priority_min)
+			priority = sys_priority_min;
+	}
+
+	/* NOTE: On Windows we need to create a new thread handle from the thread id as it may have been closed if the thread
+	 *       was created as detached. */
+	hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, (DWORD)tid);
+	if (hThread == NULL) {
+		M_fprintf(stderr, "%s(): Unable to get thread handle for Thread %lld: %ld\n", __FUNCTION__, (M_int64)tid, (long)GetLastError());
+		return M_FALSE;
+	}
+
+	if (SetThreadPriority(hThread, win_priorities[priority]) == 0) {
+		M_fprintf(stderr, "SetThreadPriority on thread %lld to %d failed: %ld\n", (M_int64)tid, win_priorities[priority], (long)GetLastError());
+		CloseHandle(hThread);
+		return M_FALSE;
+	}
+	CloseHandle(hThread);
+	return M_TRUE;
+}
+
+
+static M_bool M_thread_win_set_processor(M_thread_t *thread, M_threadid_t tid, int processor_id)
+{
+	DWORD_PTR mask;
+	HANDLE    hThread;
+
+	(void)thread;
+
+	if (processor_id == -1) {
+		/* Set to same as process as a whole */
+		DWORD_PTR dwSystemAffinity;
+		GetProcessAffinityMask(GetCurrentProcess(), &mask, &dwSystemAffinity /* unused */);
+	} else {
+		mask = ((DWORD_PTR)1) << processor_id;
+	}
+
+	/* NOTE: On Windows we need to create a new thread handle from the thread id as it may have been closed if the thread
+	 *       was created as detached. */
+	hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, (DWORD)tid);
+	if (hThread == NULL) {
+		M_fprintf(stderr, "%s(): Unable to get thread handle for Thread %lld: %ld\n", __FUNCTION__, (M_int64)tid, (long)GetLastError());
+		return M_FALSE;
+	}
+
+	if (SetThreadAffinityMask(hThread, mask) == 0) {
+		M_fprintf(stderr, "SetThreadAffinityMask for %lld to processor %d failed: %ld\n", (M_int64)tid, processor_id, (long)GetLastError());
+		CloseHandle(hThread);
+		return M_FALSE;
+	}
+	CloseHandle(hThread);
+	return M_TRUE;
+}
+
+
+static M_thread_t *M_thread_win_create(const M_thread_attr_t *attr, void *(*func)(void *), void *arg)
+{
+	DWORD   dwThreadId;
+	HANDLE  hThread;
 
 	if (func == NULL)
 		return NULL;
@@ -82,9 +169,6 @@ static M_thread_t *M_thread_win_create(M_threadid_t *id, const M_thread_attr_t *
 	hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)func, arg, 0, &dwThreadId);
 	if (hThread == NULL)
 		return NULL;
-
-	if (id)
-		*id = dwThreadId;
 
 	if (attr != NULL && !M_thread_attr_get_create_joinable(attr)) {
 		CloseHandle(hThread);
@@ -95,7 +179,7 @@ static M_thread_t *M_thread_win_create(M_threadid_t *id, const M_thread_attr_t *
 
 static M_bool M_thread_win_join(M_thread_t *thread, void **value_ptr)
 {
-	if (thread == NULL)
+	if (thread == NULL || thread == (M_thread_t *)1)
 		return M_FALSE;
 
 	if (WaitForSingleObject((HANDLE)thread, INFINITE) != WAIT_OBJECT_0)
@@ -106,8 +190,11 @@ static M_bool M_thread_win_join(M_thread_t *thread, void **value_ptr)
 	return M_TRUE;
 }
 
-static M_threadid_t M_thread_win_self(void)
+static M_threadid_t M_thread_win_self(M_thread_t **thread)
 {
+	if (thread != NULL)
+		*thread = (M_thread_t *)GetCurrentThread();
+
 	return (M_threadid_t)GetCurrentThreadId();
 }
 
@@ -120,7 +207,7 @@ static void M_thread_win_yield(M_bool force)
 
 static void M_thread_win_sleep(M_uint64 usec)
 {
-	DWORD    msec; 
+	DWORD    msec;
 	M_uint64 r;
 
 	r = usec/1000;
@@ -145,7 +232,7 @@ static M_thread_mutex_t *M_thread_win_mutex_create(M_uint32 attr)
 	M_thread_mutex_t *mutex;
 
 	(void)attr;
-	/* NOTE: we never define "struct M_thread_mutex", as we're aliasing it to a 
+	/* NOTE: we never define "struct M_thread_mutex", as we're aliasing it to a
 	 *       different type.  Bad style, but keeps our type safety */
 	mutex = M_malloc_zero(sizeof(CRITICAL_SECTION));
 	InitializeCriticalSection((LPCRITICAL_SECTION)mutex);
@@ -322,7 +409,7 @@ static void M_thread_win_cond_signal(M_thread_cond_t *cond)
 	/* close gate to prevent more waiters while signalling */
 	WaitForSingleObject(cond->gate, INFINITE);
 
-	/* If there are waiters, wake one, otherwise, just 
+	/* If there are waiters, wake one, otherwise, just
 	 * reopen the gate */
 	EnterCriticalSection(&cond->mutex);
 	cond->event = SIGNAL;
@@ -348,11 +435,14 @@ void M_thread_win_register(M_thread_model_callbacks_t *cbs)
 	cbs->init   = NULL;
 	cbs->deinit = NULL;
 	/* Thread */
-	cbs->thread_create  = M_thread_win_create;
-	cbs->thread_join    = M_thread_win_join;
-	cbs->thread_self    = M_thread_win_self;
-	cbs->thread_yield   = M_thread_win_yield;
-	cbs->thread_sleep   = M_thread_win_sleep;
+	cbs->thread_create        = M_thread_win_create;
+	cbs->thread_join          = M_thread_win_join;
+	cbs->thread_self          = M_thread_win_self;
+	cbs->thread_yield         = M_thread_win_yield;
+	cbs->thread_sleep         = M_thread_win_sleep;
+	cbs->thread_set_priority  = M_thread_win_set_priority;
+	cbs->thread_set_processor = M_thread_win_set_processor;
+
 	/* System */
 	cbs->thread_poll    = M_thread_win_poll;
 	/* Mutex */

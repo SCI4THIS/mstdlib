@@ -335,7 +335,6 @@ static void *M_event_impl_win32_eventthread(void *arg)
 
 						if (WaitForSingleObject(handles[i], 0) != WAIT_OBJECT_0)
 							continue;
-
 						M_event_impl_win32_signal(threaddata->parent, handles[i]);
 					}
 				}
@@ -424,6 +423,7 @@ static void M_event_impl_win32_modify_event(M_event_t *event, M_event_modify_typ
 
 
 	/* modtype == M_EVENT_MODTYPE_ADD_HANDLE */
+
 	M_thread_mutex_lock(data->lock);
 
 	/* Locate thread index with sufficient space to add event handle */

@@ -127,7 +127,7 @@ typedef struct {
 	"Content-Type: multipart/form-data; boundary=---------------------------7d41b838504d8\r\n" \
 	"Accept-Encoding: gzip, deflate\r\n" \
 	"User-Agent: Test Client\r\n" \
-	"Content-Length: 333\r\n" \
+	"Content-Length: 327\r\n" \
 	"Connection: Keep-Alive\r\n" \
 	"Cache-Control: no-cache\r\n" \
 	"\r\n" \
@@ -168,6 +168,19 @@ typedef struct {
 	"\r\n" \
 	"Message 3"
 
+#define http11_data "HTTP/1.1 200 OK\r\n" \
+	"Host: blah\r\n"
+
+#define http12_data "POST /upload/data HTTP/1.1\r\n" \
+	"Content-Type: multipart/form-data; boundary=---------------------------7d41b838504d8\r\n" \
+	"Content-Length: 115\r\n" \
+	"\r\n" \
+	"preamble\r\n" \
+	"-----------------------------7d41b838504d8\r\n" \
+	"\r\n" \
+	"Part data\r\n" \
+	"-----------------------------7d41b838504d8--\r\n" \
+	"ep"
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
@@ -232,6 +245,9 @@ static M_http_error_t header_full_func(const char *key, const char *val, void *t
 static M_http_error_t header_func(const char *key, const char *val, void *thunk)
 {
 	httpr_test_t *ht = thunk;
+
+	if (M_str_isempty(val))
+		return M_HTTP_ERROR_SUCCESS;
 
 	M_hash_dict_insert(ht->headers, key, val);
 	return M_HTTP_ERROR_SUCCESS;
@@ -511,7 +527,7 @@ START_TEST(check_httpr2)
 	hr  = gen_reader(ht);
 	res = M_http_reader_read(hr, (const unsigned char *)http2_data, M_str_len(http2_data), &len_read);
 
-	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS, "Parse failed: %d", res);
+	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS_MORE_POSSIBLE, "Parse failed: %d", res);
 	ck_assert_msg(len_read == M_str_len(http2_data), "Did not read full message: got '%zu', expected '%zu'", len_read, M_str_len(http2_data));
 
 	/* Start. */
@@ -839,7 +855,7 @@ START_TEST(check_httpr9)
 	hr  = gen_reader(ht);
 	res = M_http_reader_read(hr, (const unsigned char *)http9_data, M_str_len(http9_data), &len_read);
 
-	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS, "Parse failed: %d", res);
+	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS_MORE_POSSIBLE, "Parse failed: %d", res);
 	ck_assert_msg(len_read == M_str_len(http9_data), "Did not read full message: got '%zu', expected '%zu'", len_read, M_str_len(http9_data));
 
 	/* data. */
@@ -905,7 +921,7 @@ START_TEST(check_httpr10)
 	ht  = httpr_test_create();
 	hr  = gen_reader(ht);
 	res = M_http_reader_read(hr, (const unsigned char *)http10_data+len, M_str_len(http10_data)-len, &len_read);
-	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS, "Parse failed message %d: %d", 3, res);
+	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS_MORE_POSSIBLE, "Parse failed message %d: %d", 3, res);
 	/*len += len_read;*/
 
 	gval = M_buf_peek(ht->body);
@@ -914,6 +930,121 @@ START_TEST(check_httpr10)
 
 	httpr_test_destroy(ht);
 	M_http_reader_destroy(hr);
+}
+END_TEST
+
+START_TEST(check_httpr11)
+{
+	M_http_reader_t *hr;
+	httpr_test_t    *ht;
+	M_http_error_t   res;
+	size_t           len_read = 0;
+
+	ht  = httpr_test_create();
+	hr  = gen_reader(ht);
+	res = M_http_reader_read(hr, (const unsigned char *)http11_data, M_str_len(http11_data), &len_read);
+	ck_assert_msg(res == M_HTTP_ERROR_MOREDATA, "Parse failed: %d", res);
+
+	httpr_test_destroy(ht);
+	M_http_reader_destroy(hr);
+}
+END_TEST
+
+START_TEST(check_httpr12)
+{
+	M_http_reader_t *hr;
+	httpr_test_t    *ht;
+	const char      *gval;
+	const char      *eval;
+	M_http_error_t   res;
+	size_t           len;
+	size_t           len_read;
+
+	ht  = httpr_test_create();
+	hr  = gen_reader(ht);
+	res = M_http_reader_read(hr, (const unsigned char *)http12_data, M_str_len(http12_data), &len_read);
+
+	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS, "Parse failed: %d", res);
+	ck_assert_msg(len_read == M_str_len(http12_data), "Did not read full message: got '%zu', expected '%zu'", len_read, M_str_len(http12_data));
+
+	/* data. */
+	len = M_list_str_len(ht->bpieces);
+	ck_assert_msg(len == 1, "Wrong number of parts: got '%zu', expected '%d'", len, 1);
+
+	gval = M_buf_peek(ht->preamble);
+	eval = "preamble";
+	ck_assert_msg(M_str_eq(gval, eval), "Wrong preamble data: got '%s', expected '%s'", gval, eval);
+
+	gval = M_list_str_at(ht->bpieces, 0);
+	eval = "Part data";
+	ck_assert_msg(M_str_eq(gval, eval), "%zu: wrong part data: got '%s', expected '%s'", 0, gval, eval);
+
+	gval = M_buf_peek(ht->epilouge);
+	eval = "ep";
+	ck_assert_msg(M_str_eq(gval, eval), "Wrong epilouge data: got '%s', expected '%s'", gval, eval);
+
+	httpr_test_destroy(ht);
+	M_http_reader_destroy(hr);
+}
+END_TEST
+
+START_TEST(check_header_format)
+{
+	M_http_reader_t *hr;
+	httpr_test_t    *ht;
+	M_buf_t         *buf;
+	unsigned char   *out;
+	M_http_error_t   res;
+	size_t           out_len;
+	size_t           len_read = 0;
+	size_t           i;
+	static struct {
+		const char     *header;
+		M_bool          stored;
+		M_http_error_t  res;
+	} headers[] = {
+		{ "Server:v",     M_TRUE,  M_HTTP_ERROR_SUCCESS        },
+		{ "Server:",      M_FALSE, M_HTTP_ERROR_SUCCESS        },
+		{ "Server",       M_FALSE, M_HTTP_ERROR_HEADER_INVALID },
+		{ "Server v",     M_FALSE, M_HTTP_ERROR_HEADER_INVALID },
+		{ "Server :",     M_FALSE, M_HTTP_ERROR_HEADER_INVALID },
+		{ "Server : val", M_FALSE, M_HTTP_ERROR_HEADER_INVALID },
+		{ "Server: ",     M_FALSE, M_HTTP_ERROR_SUCCESS        },
+		{ " Server: ",    M_FALSE, M_HTTP_ERROR_HEADER_FOLD    },
+		{ " Server : ",   M_FALSE, M_HTTP_ERROR_HEADER_FOLD    },
+		{ ":",            M_FALSE, M_HTTP_ERROR_HEADER_INVALID },
+		{ " :",           M_FALSE, M_HTTP_ERROR_HEADER_FOLD    },
+		{ " : ",          M_FALSE, M_HTTP_ERROR_HEADER_FOLD    },
+		{ ": ",           M_FALSE, M_HTTP_ERROR_HEADER_INVALID },
+		{ " ",            M_FALSE, M_HTTP_ERROR_HEADER_FOLD    },
+		{ NULL, M_FALSE, M_HTTP_ERROR_INVALIDUSE }
+	};
+
+	for (i=0; headers[i].header!=NULL; i++) {
+		ht  = httpr_test_create();
+		hr  = gen_reader(ht);
+
+		buf = M_buf_create();
+		M_buf_add_str(buf, "HTTP/1.1 200 OK\r\n");
+		M_buf_add_str(buf, headers[i].header);
+		M_buf_add_str(buf, "\r\n");
+		M_buf_add_str(buf, "Content-Length:0\r\n");
+		M_buf_add_str(buf, "\r\n");
+		out = M_buf_finish(buf, &out_len);
+
+		res = M_http_reader_read(hr, out, out_len, &len_read);
+		ck_assert_msg(res == headers[i].res, "Parse failed header %zu: got %d, expected %d", i, res, headers[i].res);
+		ck_assert_msg(M_hash_dict_get(ht->headers, "Server", NULL) == headers[i].stored, "Ignored header 'Server' found: %zu\n", i);
+		if (res == M_HTTP_ERROR_SUCCESS) {
+			ck_assert_msg(M_hash_dict_get(ht->headers_full, "Server", NULL), "Ignored header 'Server' found: %zu\n", i);
+		} else {
+			ck_assert_msg(!M_hash_dict_get(ht->headers_full, "Server", NULL), "Ignored header 'Server' found: %zu\n", i);
+		}
+
+		M_free(out);
+		httpr_test_destroy(ht);
+		M_http_reader_destroy(hr);
+	}
 }
 END_TEST
 
@@ -978,7 +1109,9 @@ int main(void)
 	add_test(suite, check_httpr8);
 	add_test(suite, check_httpr9);
 	add_test(suite, check_httpr10);
-
+	add_test(suite, check_httpr11);
+	add_test(suite, check_httpr12);
+	add_test(suite, check_header_format);
 	add_test(suite, check_query_string);
 
 	sr = srunner_create(suite);

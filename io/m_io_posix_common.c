@@ -53,6 +53,7 @@ M_io_error_t M_io_posix_err_to_ioerr(int err)
 			return M_IO_ERROR_NOTCONNECTED;
 		case EACCES:
 		case EPERM:
+		case ENOEXEC:
 			return M_IO_ERROR_NOTPERM;
 		case ECONNRESET:
 		case ENETRESET:
@@ -79,6 +80,8 @@ M_io_error_t M_io_posix_err_to_ioerr(int err)
 		case ENOBUFS:
 		case ENOMEM:
 			return M_IO_ERROR_NOSYSRESOURCES;
+		case ENOENT:
+			return M_IO_ERROR_NOTFOUND;
 		case ENOTSOCK:
 		case EBADF:
 		case EFAULT:
@@ -294,7 +297,7 @@ void M_io_posix_sigpipe_unblock(M_io_posix_sigpipe_state_t *state)
 
 	if (sigismember(&pending, SIGPIPE)) {
 		/* Consume the signal from the signal queue */
-#if defined(HAVE_SIGTIMEDWAIT) && _POSIX_C_SOURCE >= 199309L
+#if defined(HAVE_SIGTIMEDWAIT) && ((defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 199309L) || (defined(__POSIX_VISIBLE) && __POSIX_VISIBLE > 199309L))
 		/* Prefer sigtimedwait this as it has the advantage of making sure we can't ever deadlock */
 		const struct timespec timeout = { 0, 0 };
 
@@ -302,8 +305,9 @@ void M_io_posix_sigpipe_unblock(M_io_posix_sigpipe_state_t *state)
 		while (sigtimedwait(&sigpipe_mask, NULL, &timeout) == -1 && errno == EINTR)
 			;
 #elif defined(HAVE_SIGWAIT) && !defined(__SCO_VERSION__) /* SCO6 has odd single-arg sigwait */
+		int sig = 0;
 		/* Loop because other signals could cause an EINTR */
-		while (sigwait(&sigpipe_mask, NULL) == -1 && errno == EINTR)
+		while (sigwait(&sigpipe_mask, &sig /* Ignore, we know its sigpipe */) == -1 && errno == EINTR)
 			;
 #else
 		/* WTF, braindead system (probably SCO5) */
@@ -341,14 +345,14 @@ void M_io_posix_sigpipe_unblock(M_io_posix_sigpipe_state_t *state)
 }
 
 
-void M_io_posix_fd_set_closeonexec(int fd)
+void M_io_posix_fd_set_closeonexec(int fd, M_bool tf)
 {
 	int flags = fcntl(fd, F_GETFD);
 	int rv;
 	if (flags == -1)
 		return;
 
-	rv = fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+	rv = fcntl(fd, F_SETFD, tf?(flags | FD_CLOEXEC):(flags & ~FD_CLOEXEC));
 	(void)rv; /* Appease coverity, really if this fails, its not a huge deal */
 }
 

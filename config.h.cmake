@@ -63,6 +63,7 @@
 #cmakedefine HAVE_ALIGNOF
 #cmakedefine HAVE_ACCEPT4
 #cmakedefine HAVE_PIPE2
+#cmakedefine HAVE_CONFSTR
 
 #cmakedefine _FILE_OFFSET_BITS @_FILE_OFFSET_BITS@
 #cmakedefine _LARGE_FILES
@@ -73,10 +74,15 @@
 #cmakedefine HAVE_ATOMIC_H
 #cmakedefine HAVE_PTHREAD
 #cmakedefine HAVE_PTHREAD_H
+#cmakedefine HAVE_PTHREAD_NP_H
 #cmakedefine HAVE_PTHREAD_INIT
 #cmakedefine HAVE_PTHREAD_YIELD
 #cmakedefine HAVE_PTHREAD_RWLOCK_INIT
 #cmakedefine HAVE_PTHREAD_RWLOCKATTR_SETKIND_NP
+#cmakedefine HAVE_PTHREAD_SETAFFINITY_NP
+#cmakedefine HAVE_SCHED_SETAFFINITY
+#cmakedefine HAVE_CPU_SET_T
+#cmakedefine HAVE_CPUSET_T
 
 #cmakedefine PTHREAD_SLEEP_USE_POLL
 #cmakedefine PTHREAD_SLEEP_USE_SELECT

@@ -64,12 +64,29 @@ __BEGIN_DECLS
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+/*! Error codes.
+ *
+ * M_HTTP_ERROR_SUCCESS, and M_HTTP_ERROR_SUCCESS_MORE_POSSIBLE are both
+ * Success conditions. All data is valid and has been parsed.
+ *
+ * M_HTTP_ERROR_MOREDATA indicates valid data and isn't always considered an
+ * error condition. It typically indicates a retry once more data is received
+ * condition. For example more headers could follow or the content length or
+ * chucked data was not complete.  There is more data needed to complete the
+ * message. It is only an error if end of data has been reached.
+ *
+ * M_HTTP_ERROR_STOP is not considered an error and means no more processing
+ * will/should take place. A callback should generate this if all data the caller
+ * wants has been processed if partial processing is taking place. For example,
+ * a proxy looking for X-Forwarded-For header in order to blacklist an abusive
+ * IP before forwarding the message.
+ */
 typedef enum {
-	M_HTTP_ERROR_SUCCESS = 0,                /*!< Success. */
-	M_HTTP_ERROR_SUCCESS_MORE_POSSIBLE,      /*!< Success but more data possible. No content length was sent so the only way to know all data was received is by a disconnect. */
-	M_HTTP_ERROR_INVALIDUSE,                 /*!< Invalid use. */
+	M_HTTP_ERROR_SUCCESS = 0,                /*!< Success. Data fully parsed and all data is present. */
+	M_HTTP_ERROR_SUCCESS_MORE_POSSIBLE,      /*!< Success but more data possible. No content length was sent or chunking was used. The only way to know all data was received is by a disconnect. */
+	M_HTTP_ERROR_MOREDATA,                   /*!< Incomplete message, more data required. Not necessarily an error if parsing as data is streaming. */
 	M_HTTP_ERROR_STOP,                       /*!< Stop processing (Used by callback functions to indicate non-error but stop processing). */
-	M_HTTP_ERROR_MOREDATA,                   /*!< Incomplete message, more data required. */
+	M_HTTP_ERROR_INVALIDUSE,                 /*!< Invalid use. */
 	M_HTTP_ERROR_LENGTH_REQUIRED,            /*!< Content-Length is required but not provided. 411 code. */
 	M_HTTP_ERROR_CHUNK_EXTENSION_NOTALLOWED, /*!< Chunk extensions are present but not allowed. */
 	M_HTTP_ERROR_TRAILER_NOTALLOWED,         /*!< Chunk trailer present but not allowed. */
@@ -697,11 +714,18 @@ M_API void M_http_reader_destroy(M_http_reader_t *httpr);
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-/*! Parse next http message from given array.
+/*! Parse http message from given data.
  *
- * Will not return M_HTTP_ERROR_MOREDATA. It is up to the caller to
- * determine when a full message has been read. If Content-Length
- * is not set it can be impossible to determine if a parse is complete.
+ * M_HTTP_ERROR_SUCCESS, and M_HTTP_ERROR_SUCCESS_MORE_POSSIBLE are both
+ * Success conditions. Data is valid and has been parsed. Remaining unread data
+ * in the buffer on M_HTTP_ERROR_SUCCESS indicates a possible additional
+ * message.
+ *
+ * M_HTTP_ERROR_MOREDATA indicates valid data but an incomplete message.  The
+ * parse should be run again starting where the last parse stopped. Until
+ * a known or possible full parse has completed.
+ *
+ * The reader can only be used once per complete message.
  *
  * \param[in]  httpr    Http reader object.
  * \param[in]  data     Data to parse.
@@ -725,7 +749,7 @@ M_API M_http_error_t M_http_reader_read(M_http_reader_t *httpr, const unsigned c
  * @{
  */
 
-/*! \addtogroup m_http_simple_write HTTP Simple Reader
+/*! \addtogroup m_http_simple_read HTTP Simple Reader
  *  \ingroup m_http_simple
  *
  * Reads a full HTTP message. Useful for small messages.
@@ -752,14 +776,19 @@ typedef enum {
 
 /*! Read the next HTTP message from the given buffer, store results in a new M_http_simple_read_t object.
  *
+ * Will return M_HTTP_ERROR_MOREDATA if we need to wait for more data to get a complete message.
+ *
  * \param[out] simple   Place to store new M_http_simple_read_t object. Can be NULL to check for valid message.
+ *                      Will only be set on M_HTTP_ERROR_SUCCESS, and M_HTTP_ERROR_SUCCESS_MORE_POSSIBLE.
  * \param[in]  data     Buffer containing HTTP messages to read.
  * \param[in]  data_len Length of \a data.
  * \param[in]  flags    Read options (OR'd combo of M_http_simple_read_flags_t).
  * \param[in]  len_read Num bytes consumed from \a data (may be NULL, if caller doesn't need this info).
+ *                      Will be set on error indicating the location in the message that generated the error.
  *
- * \return Error code (M_HTTP_ERROR_SUCCESS if successful).
+ * \return Response code.
  *
+ * \see M_http_reader_read
  * \see M_http_simple_read_parser
  * \see M_http_simple_read_destroy
  */
@@ -768,19 +797,22 @@ M_API M_http_error_t M_http_simple_read(M_http_simple_read_t **simple, const uns
 
 /*! Read the next HTTP message from the given parser.
  *
- * On success parser will consume message.
- *
  * Will return M_HTTP_ERROR_MOREDATA if we need to wait for more data to get a complete message.
  * No data will be dropped from the parser, in this case.
  *
- * \see M_http_simple_read
- * \see M_http_simple_destroy
+ * On all other return values the parser will advance and data consumed. On a hard ERROR condition
+ * the parser will start at the point of the error. If this is undesirable, the parser should be
+ * marked and rewound after this function is called.
  *
  * \param[out] simple Place to store new M_http_simple_read_t object. Can be NULL to check for valid message.
  * \param[in]  parser Buffer containing HTTP messages to read.
  * \param[in]  flags  Read options (OR'd combo of M_http_simple_read_flags_t).
  *
- * \return Error code (M_HTTP_ERROR_SUCCESS if successful).
+ * \return Response code.
+ *
+ * \see M_http_reader_read
+ * \see M_http_simple_read
+ * \see M_http_simple_destroy
  */
 M_API M_http_error_t M_http_simple_read_parser(M_http_simple_read_t **simple, M_parser_t *parser, M_uint32 flags);
 
@@ -1135,7 +1167,7 @@ M_API const char *M_http_simple_read_charset(const M_http_simple_read_t *simple)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-/*! \addtogroup m_http_simple_read HTTP Simple Writer
+/*! \addtogroup m_http_simple_write HTTP Simple Writer
  *  \ingroup m_http_simple
  *
  * Generate request and response messages.

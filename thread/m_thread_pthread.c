@@ -28,7 +28,9 @@
 #ifdef HAVE_PTHREAD_H
 #  include <pthread.h>
 #endif
-
+#ifdef HAVE_PTHREAD_NP_H
+#  include <pthread_np.h>
+#endif
 #include <poll.h>
 
 #if defined(PTHREAD_SLEEP_USE_SELECT) && defined(HAVE_SYS_SELECT_H)
@@ -54,12 +56,32 @@
 #include "base/time/m_time_int.h"
 #include "m_thread_int.h"
 #include <errno.h>
+#include <string.h>
+
+#ifdef __linux__
+#  include <sys/syscall.h>
+#  include <sys/resource.h>
+#endif
+
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/thread_policy.h>
+#endif
+
+#ifdef __sun__
+#  include <sys/types.h>
+#  include <sys/processor.h>
+#  include <sys/procset.h>
+#endif
+
+#ifdef _AIX
+#  include <sys/thread.h>
+#endif
+
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static void M_thread_pthread_attr_topattr(const M_thread_attr_t *attr, pthread_attr_t *tattr)
 {
-	struct sched_param tparam;
-
 	pthread_attr_init(tattr);
 
 	if (attr == NULL)
@@ -79,10 +101,6 @@ static void M_thread_pthread_attr_topattr(const M_thread_attr_t *attr, pthread_a
 		 * 64bit systems */
 		pthread_attr_setstacksize(tattr, 128 * 1024 * (sizeof(void *)/4));
 	}
-
-	M_mem_set(&tparam, 0, sizeof(tparam));
-	tparam.sched_priority = M_thread_attr_get_priority(attr);
-	pthread_attr_setschedparam(tattr, &tparam);
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -94,30 +112,233 @@ static void M_thread_pthread_init(void)
 #endif
 }
 
-static M_thread_t *M_thread_pthread_create(M_threadid_t *id, const M_thread_attr_t *attr, void *(*func)(void *), void *arg)
-{
-	pthread_t      thread;
-	pthread_attr_t tattr;
-	int            ret;
 
-	if (id)
-		*id = 0;
+static M_threadid_t M_thread_pthread_self(M_thread_t **thread)
+{
+	M_threadid_t rv = 0;
+
+#if defined(__linux__)
+	/* Get pid of thread.  Yes, linux actually assigns an internal pid of the thread
+	 * due to use of clone(). We cache it in a thread-local static variable since
+	 * we don't want to call a syscall constantly, thats really slow. */
+	static __thread pid_t tid = 0;
+
+	if (tid == 0)
+		tid = (pid_t)syscall(__NR_gettid);
+
+	rv = (M_threadid_t)tid;
+#elif defined(_AIX)
+	tid_t tid = thread_self();
+	rv = (M_threadid_t)tid;
+#else
+	/* Generic */
+	/* Yes, of course we could do this in a single line, but due to all the possible
+	 * underlying datatypes of pthread_t, we actually need to do some work to prevent
+	 * warnings on various systems */
+	pthread_t id = pthread_self();
+	void     *th = (void *)((M_uintptr)id);
+
+	rv = (M_threadid_t)th;
+#endif
+
+	if (thread != NULL)
+		*thread = (M_thread_t *)pthread_self();
+
+/* NOTE: for apple should we instead return  thread_port_t pthread_mach_thread_np(pthread_self()); ?? */
+	return rv;
+}
+
+
+static M_bool M_thread_pthread_set_priority(M_thread_t *thread, M_threadid_t tid, M_uint8 mthread_priority)
+{
+	struct sched_param tparam;
+	int                sys_priority_min;
+	int                sys_priority_max;
+	int                sys_priority_range;
+	int                mthread_priority_range;
+	double             priority_scale;
+	int                priority;
+	M_bool             use_setpriority = M_FALSE;
+	M_bool             rv              = M_TRUE;
+	int                retval;
+
+	M_mem_set(&tparam, 0, sizeof(tparam));
+
+	sys_priority_min       = sched_get_priority_min(SCHED_OTHER);
+	sys_priority_max       = sched_get_priority_max(SCHED_OTHER);
+	sys_priority_range     = (sys_priority_max - sys_priority_min) + 1;
+
+	/* Linux can't seem to use thread priorities, they say the range is 0-0, so we have to recalculate using process nice priorities */
+	if (sys_priority_range <= 1) {
+#ifdef __linux__
+		use_setpriority = M_TRUE;
+		/* Nice levels are -20 (highest priority) -> 19 (lowest priority), with normal being 0 */
+		sys_priority_max       = -20;
+		sys_priority_min       = 19;
+		sys_priority_range     = M_ABS(sys_priority_max - sys_priority_min) + 1;
+#endif
+	}
+
+	/* Lets handle min and max without scaling */
+	if (mthread_priority == M_THREAD_PRIORITY_MAX) {
+		priority = sys_priority_range - 1;
+	} else if (mthread_priority == M_THREAD_PRIORITY_MIN) {
+		priority = 0;
+	} else {
+		mthread_priority_range = (M_THREAD_PRIORITY_MAX - M_THREAD_PRIORITY_MIN) + 1;
+		priority_scale         = ((double)sys_priority_range) / ((double)mthread_priority_range);
+		priority               = (int)(((double)(mthread_priority - M_THREAD_PRIORITY_MIN)) * priority_scale);
+	}
+
+	/* check bounds */
+	if (priority < 0)
+		priority = 0;
+	if (priority > sys_priority_range - 1)
+		priority = sys_priority_range - 1;
+
+	/* Check for inverted scale */
+	if (sys_priority_max < sys_priority_min) {
+		priority = (sys_priority_range - 1) - priority;
+		priority += sys_priority_max;
+	} else {
+		/* Normalize into range */
+		priority += sys_priority_min;
+	}
+
+	if (sys_priority_range > 1 && !use_setpriority) {
+		/* Lets handle min and max without scaling */
+		if (mthread_priority == M_THREAD_PRIORITY_MIN) {
+			tparam.sched_priority = sys_priority_min;
+		} else if (mthread_priority == M_THREAD_PRIORITY_MAX) {
+			tparam.sched_priority = sys_priority_max;
+		} else {
+			tparam.sched_priority = priority;
+		}
+		retval = pthread_setschedparam((pthread_t)thread, SCHED_OTHER, &tparam);
+		if (retval != 0) {
+			M_fprintf(stderr, "Thread TID %lld: pthread_setschedparam %d (min %d, max %d): failed: %d: %s\n", (M_int64)tid, priority, sys_priority_min, sys_priority_max, retval, strerror(retval));
+			rv = M_FALSE;
+		}
+#ifdef __linux__
+	} else if (use_setpriority) {
+		/* Set the Nice priority. This may fail if set higher than allowed.  I don't think
+		 * its worth calling  getrlimit(RLIMIT_NICE) just to see if it might fail before calling it. */
+		retval = setpriority(PRIO_PROCESS, (id_t)tid, priority);
+		if (retval != 0) {
+			M_fprintf(stderr, "Thread TID %lld: nice priority %d: failed: %d: %s\n", (M_int64)tid, priority, retval, strerror(errno));
+			rv = M_FALSE;
+		}
+#endif
+	} else {
+		M_fprintf(stderr, "Thread TID %lld: could not determine how to set priority due to limited range\n", (M_int64)tid);
+		rv = M_FALSE;
+	}
+
+	return rv;
+}
+
+
+static M_bool M_thread_pthread_set_processor(M_thread_t *thread, M_threadid_t tid, int processor_id)
+{
+#if defined(HAVE_PTHREAD_SETAFFINITY_NP)
+#  if defined(HAVE_CPUSET_T)
+	cpuset_t  cpuset;
+#  elif defined(HAVE_CPU_SET_T)
+	cpu_set_t cpuset;
+#  else
+#    error unknown cpuset data type
+#  endif
+
+	CPU_ZERO(&cpuset);
+	if (processor_id == -1) {
+		size_t i;
+		for (i=0; i<M_thread_num_cpu_cores(); i++) {
+			CPU_SET((int)i, &cpuset);
+		}
+	} else {
+		CPU_SET(processor_id, &cpuset);
+	}
+	(void)tid;
+	if (pthread_setaffinity_np((pthread_t)thread, sizeof(cpuset), &cpuset) != 0) {
+		M_fprintf(stderr, "pthread_setaffinity_np thread %lld to processor %d failed\n", (M_int64)thread, processor_id);
+		return M_FALSE;
+	}
+#elif defined(HAVE_SCHED_SETAFFINITY) && defined(HAVE_CPU_SET_T)
+	/* Other C libraries on Linux may not wrap sched_setaffinity() into a pthread_setaffinity_np().  So lets support passing
+	 * the tid to sched_setaffinity() which according to the docs has the same effect on linux. */
+	cpu_set_t cpuset;
+
+	(void)thread;
+
+	CPU_ZERO(&cpuset);
+	if (processor_id == -1) {
+		size_t i;
+		for (i=0; i<M_thread_num_cpu_cores(); i++) {
+			CPU_SET((int)i, &cpuset);
+		}
+	} else {
+		CPU_SET(processor_id, &cpuset);
+	}
+
+	if (sched_setaffinity(tid, sizeof(cpuset), &cpuset) != 0) {
+		M_fprintf(stderr, "sched_setaffinity thread %lld to processor %d failed: %s\n", (M_int64)thread, processor_id, strerror(errno));
+		return M_FALSE;
+	}
+#elif defined(__sun__)
+	(void)tid;
+	if (processor_bind(P_LWPID, (id_t)((pthread_t)thread), (processorid_t)((processor_id == -1)?PBIND_NONE:processor_id), NULL) != 0) {
+		M_fprintf(stderr, "processor_bind thread %lld to processor %d failed\n", (M_int64)thread, processor_id);
+		return M_FALSE;
+	}
+#elif defined(__APPLE__)
+	thread_port_t                 mach_thread = pthread_mach_thread_np((pthread_t)thread);
+	thread_affinity_policy_data_t policy      = { (processor_id == -1)?THREAD_AFFINITY_TAG_NULL:processor_id+1 };
+	(void)tid;
+	if (thread_policy_set(mach_thread, THREAD_AFFINITY_POLICY, (thread_policy_t)&policy, 1) != KERN_SUCCESS) {
+		M_fprintf(stderr, "thread_policy_set thread %lld to processor %d failed\n", (M_int64)thread, processor_id);
+		return M_FALSE;
+	}
+#elif defined(_AIX)
+	(void)thread;
+	if (bindprocessor(BINDTHREAD, (id_t)tid, (cpu_t)((processor_id == -1)?PROCESSOR_CLASS_ANY:processor_id)) != 0) {
+		M_fprintf(stderr, "bindprocessor thread %lld to processor %d failed\n", (M_int64)thread, processor_id);
+		return M_FALSE;
+	}
+#elif defined(__ANDROID__)
+	(void)thread;
+	(void)tid;
+	(void)processor_id;
+#  warning thread affinity not supported on this OS
+
+#else
+#  error do not know how to set thread affinity
+#endif
+	return M_TRUE;
+}
+
+
+static M_thread_t *M_thread_pthread_create(const M_thread_attr_t *attr, void *(*func)(void *), void *arg)
+{
+	pthread_t                     thread;
+	pthread_attr_t                tattr;
+	int                           ret;
 
 	if (func == NULL) {
 		return NULL;
 	}
 
 	M_thread_pthread_attr_topattr(attr, &tattr);
+
 	ret = pthread_create(&thread, &tattr, func, arg);
 	pthread_attr_destroy(&tattr);
+
 	if (ret != 0) {
 		return NULL;
 	}
 
-	if (id != NULL)
-		*id = (M_threadid_t)thread;
 	return (M_thread_t *)thread;
 }
+
 
 static M_bool M_thread_pthread_join(M_thread_t *thread, void **value_ptr)
 {
@@ -129,14 +350,6 @@ static M_bool M_thread_pthread_join(M_thread_t *thread, void **value_ptr)
 	return M_TRUE;
 }
 
-static M_threadid_t M_thread_pthread_self(void)
-{
-	/* We use a couple of temporary variables in order to avoid
-	 * compiler warnings. */
-	pthread_t id = pthread_self();
-	void     *th = (void *)id;
-	return (M_threadid_t)th;
-}
 
 static void M_thread_pthread_sleep(M_uint64 usec)
 {
@@ -390,11 +603,13 @@ void M_thread_pthread_register(M_thread_model_callbacks_t *cbs)
 	cbs->init   = M_thread_pthread_init;
 	cbs->deinit = NULL;
 	/* Thread */
-	cbs->thread_create  = M_thread_pthread_create;
-	cbs->thread_join    = M_thread_pthread_join;
-	cbs->thread_self    = M_thread_pthread_self;
-	cbs->thread_yield   = M_thread_pthread_yield;
-	cbs->thread_sleep   = M_thread_pthread_sleep;
+	cbs->thread_create        = M_thread_pthread_create;
+	cbs->thread_join          = M_thread_pthread_join;
+	cbs->thread_self          = M_thread_pthread_self;
+	cbs->thread_yield         = M_thread_pthread_yield;
+	cbs->thread_sleep         = M_thread_pthread_sleep;
+	cbs->thread_set_priority  = M_thread_pthread_set_priority;
+	cbs->thread_set_processor = M_thread_pthread_set_processor;
 	/* System */
 	cbs->thread_poll    = M_thread_pthread_poll;
 	cbs->thread_sigmask = M_thread_pthread_sigmask;

@@ -1,17 +1,17 @@
 /* The MIT License (MIT)
- * 
+ *
  * Copyright (c) 2015 Monetra Technologies, LLC.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -65,8 +65,12 @@ static struct {
 };
 
 typedef struct {
-	void *(*func)(void *arg);
-	void *arg;
+	void             *(*func)(void *arg);
+	void             *arg;
+	M_bool            joinable;
+	M_threadid_t     *thread_id;  /*!< Pointer to OS thread id */
+	M_thread_cond_t  *cond;       /*!< Pointer for Conditional for signalling when OS thread id has been filled */
+	M_thread_mutex_t *mutex;      /*!< Pointer for Mutex for OS thread id filling */
 } M_thread_wrapfunc_data_t;
 
 static M_bool M_thread_once_int(M_thread_once_t *once_control, M_bool atomics_only, void (*init_routine)(M_uint64 flags), M_uint64 init_flags);
@@ -78,37 +82,66 @@ static M_bool M_thread_once_reset_int(M_thread_once_t *once_control, M_bool atom
 
 static void *M_thread_wrapfunc(void *arg)
 {
-	M_thread_wrapfunc_data_t *data;
+	M_thread_wrapfunc_data_t *data = arg;
 	void                     *ret;
-	size_t                   len;
-	size_t                   i;
-	void                     (**destructors)(void);
+	size_t                    len;
+	size_t                    i;
+	void                   (**destructors)(void);
 
 	M_thread_mutex_lock(thread_count_mutex);
 	thread_count++;
 	M_thread_mutex_unlock(thread_count_mutex);
 
-	data = (M_thread_wrapfunc_data_t *)arg;
-	ret  = data->func(data->arg);
+
+	/* Notify parent we have set the thread id */
+	M_thread_mutex_lock(data->mutex);
+	*(data->thread_id) = thread_cbs.thread_self(NULL);
+	M_thread_cond_signal(data->cond);
+
+	/* Wait for parent to say it is ok to continue */
+	M_thread_cond_wait(data->cond, data->mutex);
+
+	/* Destroy unneeded data */
+	M_thread_mutex_unlock(data->mutex);
+	M_thread_cond_destroy(data->cond);
+	M_thread_mutex_destroy(data->mutex);
+	data->cond      = NULL;
+	data->mutex     = NULL;
+	data->thread_id = NULL;
+
+	/* Run user function */
+	ret         = data->func(data->arg);
 
 	M_thread_mutex_lock(thread_destructor_mutex);
-	len = M_list_len(thread_destructors);
+	len         = M_list_len(thread_destructors);
 	destructors = M_malloc(sizeof(void (*)(void))*len);
-	for (i=0;i<len;i++) {
+
+	for (i=0; i<len; i++) {
 		const void *dst = M_list_at(thread_destructors, i);
 		destructors[i] = M_CAST_OFF_CONST(void *, dst);
 	}
+
 	M_thread_mutex_unlock(thread_destructor_mutex);
+
 	for (i=0; i<len; i++) {
 		destructors[i]();
 	}
-	M_free(destructors);
 
-	M_free(data);
+	M_free(destructors);
 
 	M_thread_mutex_lock(thread_count_mutex);
 	thread_count--;
 	M_thread_mutex_unlock(thread_count_mutex);
+
+	if (!data->joinable) {
+		M_threadid_t id = M_thread_self();
+		M_thread_mutex_lock(threadid_mutex);
+		M_hash_u64vp_remove(threadid_map, id, M_FALSE);
+		M_thread_mutex_unlock(threadid_mutex);
+	}
+
+	M_free(data);
+
 	return ret;
 }
 
@@ -154,6 +187,8 @@ static void M_thread_deinit(void *arg)
 static void M_thread_init_routine(M_uint64 flags)
 {
 	size_t i;
+	M_thread_t  *thread = NULL;
+	M_threadid_t threadid = 0;
 
 	M_thread_model_t model = (M_thread_model_t)flags;
 
@@ -172,6 +207,10 @@ static void M_thread_init_routine(M_uint64 flags)
 
 	threadid_mutex = M_thread_mutex_create(M_THREAD_MUTEXATTR_NONE);
 	threadid_map   = M_hash_u64vp_create(8, 75, M_HASH_U64VP_NONE, NULL);
+
+	/* Add self to thread map -- needed for things like setting a priority/processor */
+	threadid = thread_cbs.thread_self(&thread);
+	M_hash_u64vp_insert(threadid_map, threadid, thread);
 
 	thread_count_mutex = M_thread_mutex_create(M_THREAD_MUTEXATTR_NONE);
 
@@ -243,7 +282,7 @@ static size_t M_thread_num_cpu_cores_int(void)
 	count = (int)sysconf(_SC_NPROC_ONLN);
 #elif defined(HW_AVAILCPU) || defined(HW_NCPU)
 	int    mib[4];
-	size_t len    = sizeof(count); 
+	size_t len    = sizeof(count);
 
 	/* set the mib for hw.ncpu */
 	mib[0] = CTL_HW;
@@ -325,7 +364,7 @@ static void M_thread_spinlock_lock_int(M_thread_spinlock_t *spinlock, M_bool ato
 	 * reads only.  We should be guaranteed that a read of a 32bit integer
 	 * is both cheap and reliable (we won't read a corrupt value) */
 	while ((current = spinlock->current) != myqueue) {
-		
+
 		M_uint32 diff;
 
 		if (!atomics_only) {
@@ -380,20 +419,38 @@ void M_thread_spinlock_unlock(M_thread_spinlock_t *spinlock)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+static M_thread_t *M_thread_from_threadid(M_threadid_t threadid)
+{
+	M_thread_t *thread = NULL;
+
+	M_thread_mutex_lock(threadid_mutex);
+	thread = M_hash_u64vp_get_direct(threadid_map, threadid);
+	M_thread_mutex_unlock(threadid_mutex);
+	return thread;
+}
+
 M_threadid_t M_thread_create(const M_thread_attr_t *attr, void *(*func)(void *), void *arg)
 {
 	M_thread_wrapfunc_data_t *data;
 	M_thread_t               *thread;
 	M_threadid_t              id     = 0;
 	M_thread_attr_t          *myattr = NULL;
+	M_thread_cond_t          *cond   = NULL;
+	M_thread_mutex_t         *mutex  = NULL;
 
 	M_thread_auto_init();
 	if (thread_cbs.thread_create == NULL)
 		return 0;
 
-	data = M_malloc(sizeof(*data));
-	data->func = func;
-	data->arg  = arg;
+	data            = M_malloc(sizeof(*data));
+	data->func      = func;
+	data->arg       = arg;
+	cond            = M_thread_cond_create(M_THREAD_CONDATTR_NONE);
+	mutex           = M_thread_mutex_create(M_THREAD_MUTEXATTR_NONE);
+	data->cond      = cond;
+	data->mutex     = mutex;
+	data->thread_id = &id;
+	data->joinable  = M_thread_attr_get_create_joinable(attr);
 
 	/* ensure an attr is created so threads are setup properly (in a detachted state by default). */
 	if (attr == NULL) {
@@ -401,13 +458,41 @@ M_threadid_t M_thread_create(const M_thread_attr_t *attr, void *(*func)(void *),
 		attr   = myattr;
 	}
 
-	thread = thread_cbs.thread_create(&id, attr, M_thread_wrapfunc, data);
+	M_thread_mutex_lock(mutex);
 
-	if (M_thread_attr_get_create_joinable(attr) && thread_cbs.thread_join != NULL) {
-		M_thread_mutex_lock(threadid_mutex);
-		M_hash_u64vp_insert(threadid_map, id, thread);
-		M_thread_mutex_unlock(threadid_mutex);
+	thread = thread_cbs.thread_create(attr, M_thread_wrapfunc, data);
+	if (thread == NULL) {
+		M_thread_mutex_unlock(mutex);
+		M_thread_cond_destroy(cond);
+		M_thread_mutex_destroy(mutex);
+		M_free(data);
+		if (myattr != NULL) {
+			M_thread_attr_destroy(myattr);
+		}
+		return 0;
 	}
+
+	/* Wait to be signaled that the thread id has been set by the thread */
+	M_thread_cond_wait(cond, mutex);
+
+	/* Add to thread map */
+	M_thread_mutex_lock(threadid_mutex);
+	M_hash_u64vp_insert(threadid_map, id, thread);
+	M_thread_mutex_unlock(threadid_mutex);
+
+	/* Set thread processor and priority if necessary */
+	if (M_thread_attr_get_processor(attr) != -1) {
+		M_thread_set_processor(id, M_thread_attr_get_processor(attr));
+	}
+
+	if (M_thread_attr_get_priority(attr) != M_THREAD_PRIORITY_NORMAL) {
+		M_thread_set_priority(id, M_thread_attr_get_priority(attr));
+	}
+
+	/* Signal thread its ok to continue as we've recorded the necessary information
+	 * NOTE:  it is the responsibility of the thread to destroy cond and mutex */
+	M_thread_cond_signal(cond);
+	M_thread_mutex_unlock(mutex);
 
 	if (myattr != NULL) {
 		M_thread_attr_destroy(myattr);
@@ -416,9 +501,11 @@ M_threadid_t M_thread_create(const M_thread_attr_t *attr, void *(*func)(void *),
 	return id;
 }
 
+
 M_bool M_thread_join(M_threadid_t id, void **value_ptr)
 {
 	M_thread_t *thread;
+	M_bool      rv;
 
 	M_thread_auto_init();
 	if (thread_cbs.thread_join == NULL)
@@ -426,22 +513,76 @@ M_bool M_thread_join(M_threadid_t id, void **value_ptr)
 
 	M_thread_mutex_lock(threadid_mutex);
 	thread = M_hash_u64vp_get_direct(threadid_map, id);
-	M_hash_u64vp_remove(threadid_map, id, M_FALSE); 
 	M_thread_mutex_unlock(threadid_mutex);
 
 	if (thread == NULL)
 		return M_FALSE;
 
-	return thread_cbs.thread_join(thread, value_ptr);
+	rv = thread_cbs.thread_join(thread, value_ptr);
+
+	if (rv) {
+		M_thread_mutex_lock(threadid_mutex);
+		M_hash_u64vp_remove(threadid_map, id, M_FALSE);
+		M_thread_mutex_unlock(threadid_mutex);
+	}
+
+	return rv;
 }
 
 M_threadid_t M_thread_self(void)
 {
+	M_thread_t  *thread = NULL;
+	M_threadid_t id     = 0;
+
 	M_thread_auto_init();
-	if (thread_cbs.thread_self == 0)
+	if (thread_cbs.thread_self == NULL)
 		return 0;
-	return thread_cbs.thread_self();
+
+	id = thread_cbs.thread_self(&thread);
+
+	return id;
 }
+
+M_bool M_thread_set_priority(M_threadid_t tid, M_uint8 priority)
+{
+	M_thread_t *thread;
+	M_thread_auto_init();
+
+	if (priority < M_THREAD_PRIORITY_MIN || priority > M_THREAD_PRIORITY_MAX)
+		return M_FALSE;
+
+	if (thread_cbs.thread_set_priority == NULL)
+		return M_FALSE;
+
+	thread = M_thread_from_threadid(tid);
+	if (thread == NULL) {
+		M_fprintf(stderr, "%s(): ThreadID %lld could not find Thread pointer\n", __FUNCTION__, (M_int64)tid);
+		return M_FALSE;
+	}
+	return thread_cbs.thread_set_priority(thread, tid, priority);
+}
+
+M_bool M_thread_set_processor(M_threadid_t tid, int processor_id)
+{
+	M_thread_t *thread;
+	M_thread_auto_init();
+
+	/* NOTE: -1 is valid to unbind a thread from a processor */
+	if (processor_id < -1 || processor_id >= (int)M_thread_num_cpu_cores())
+		return M_FALSE;
+
+	if (thread_cbs.thread_set_processor == NULL)
+		return M_FALSE;
+
+	thread = M_thread_from_threadid(tid);
+	if (thread == NULL) {
+		M_fprintf(stderr, "%s(): ThreadID %lld could not find Thread pointer\n", __FUNCTION__, (M_int64)tid);
+		return M_FALSE;
+	}
+
+	return thread_cbs.thread_set_processor(thread, tid, processor_id);
+}
+
 
 void M_thread_yield(M_bool force)
 {

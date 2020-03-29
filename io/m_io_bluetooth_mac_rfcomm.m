@@ -36,24 +36,22 @@ IOBluetoothRFCOMMChannel *_channel = nil;
 BluetoothRFCOMMChannelID  _cid;
 M_uint16                  _mtu     = 0;
 
-+ (id)m_io_bluetooth_mac_rfcomm:(NSString *)mac uuid:(NSString *)uuid handle:(M_io_handle_t *)handle
++ (id)m_io_bluetooth_mac_rfcomm:(NSString *)mac uuid:(NSString *)uuid 
 {
-	return [[M_io_bluetooth_mac_rfcomm alloc] init:mac uuid:uuid handle:handle];
+	return [[M_io_bluetooth_mac_rfcomm alloc] init:mac uuid:uuid];
 }
 
-- (id)init:(NSString *)mac uuid:(NSString *)uuid handle:(M_io_handle_t *)handle
+- (id)init:(NSString *)mac uuid:(NSString *)uuid
 {
 	const char *cuuid;
 	M_bool      found = M_FALSE;
 
-	if (mac == nil || handle == nil)
+	if (mac == nil)
 		return nil;
 
 	self = [super init];
 	if (!self)
 		return nil;
-
-	_handle = handle;
 
 	if (uuid == nil)
 		uuid = [NSString stringWithUTF8String:M_IO_BLUETOOTH_RFCOMM_UUID];
@@ -101,8 +99,11 @@ M_uint16                  _mtu     = 0;
 		}
 	}
 
-	if (!found)
+	if (!found) {
+		[_dev closeConnection];
+		_dev = nil;
 		return nil;
+	}
 
 	return self;
 }
@@ -110,71 +111,50 @@ M_uint16                  _mtu     = 0;
 - (void)dealloc
 {
 	[self close];
+	_dev = nil;
 }
 
-- (BOOL)connect
+- (void)connect:(M_io_handle_t *)handle
 {
-	/* We need to get the result of the connect here to know if the whole process is being started
-	 * or if the caller needs to fail and clean up. The connect call needs to happen in our global
-	 * macOS io runloop because the bluetooth interface needs to be on a runloop. We can't assign
-	 * the object to a runloop like we can with HID; instead it's bound to which ever thread connect
-	 * was called on.
-	 *
-	 * We use CFRunLoopPerformBlock to run the connect function (within a block) on the global runloop.
-	 * ioret is tagged as a __block variable so the block can modify the value for use outside of the
-	 * block.
-	 *
-	 * A semaphore is used to wait for the connect call to set the return value.
-	 *
-	 * CFRunLoopPerformBlock queues the block but it won't run until an event triggers the runloop
-	 * to wake up. We use CFRunLoopWakeUp to force it to run pending blocks. Such as our connect
-	 * block.
-	 */
+	if (handle == NULL)
+		return;
+	_handle = handle;
 
-	__block IOReturn     ioret = kIOReturnInvalid;
-	dispatch_semaphore_t sem   = dispatch_semaphore_create(0);
-
-	M_io_mac_runloop_start();
-
-	CFRunLoopPerformBlock(M_io_mac_runloop, kCFRunLoopCommonModes, ^{
-		/* Use a temporary channel for storage because openRFCOMMChannelAsync takes an __auto_release paraemter.
-		 * We are going to assign it to a __strong parameter to prevent it from being cleaned up from under
-		 * us but we can't do that directly. */
+	dispatch_async(dispatch_get_main_queue(), ^{
 		IOBluetoothRFCOMMChannel *channel = nil;
-		ioret    = [_dev openRFCOMMChannelAsync:&channel withChannelID:_cid delegate:self];
-		_channel = channel;
-		dispatch_semaphore_signal(sem);
+		IOReturn                  ioret;
+
+		ioret = [_dev openRFCOMMChannelAsync:&channel withChannelID:_cid delegate:self];
+		if (ioret == kIOReturnSuccess) {
+			_channel = channel;
+		}
 	});
-	CFRunLoopWakeUp(M_io_mac_runloop);
-	dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
-
-	if (ioret != kIOReturnSuccess)
-		return NO;
-
-	return YES;
 }
 
 - (void)close_int
 {
-	if (_channel == nil)
-		return;
+	if (_channel != nil) {
+		[_channel setDelegate:nil];
+		[_channel closeChannel];
+		_channel = nil;
+	}
 
-	[_channel setDelegate:nil];
-	[_channel closeChannel];
-	[_dev closeConnection];
-	_channel = nil;
-	_dev     = nil;
+	if ([_dev isConnected])
+		[_dev closeConnection];
 }
 
 - (void)close
 {
 	M_io_layer_t *layer;
 
-	if (_channel == nil)
+	if (_handle == NULL) {
+		[self close_int];
 		return;
+	}
 
 	layer = M_io_layer_acquire(_handle->io, 0, NULL);
 	[self close_int];
+	_handle = NULL;
 	M_io_layer_release(layer);
 }
 
@@ -187,6 +167,9 @@ M_uint16                  _mtu     = 0;
 	M_uint16      send_len;
 
 	if (_channel == nil)
+		return;
+
+	if (_handle == NULL)
 		return;
 
 	layer = M_io_layer_acquire(_handle->io, 0, NULL);
@@ -221,7 +204,7 @@ M_uint16                  _mtu     = 0;
 	/* This function should be called when the layer is locked but _write will also
 	 * lock the layer. We will displatch the actual write so this can return and unlock
 	 * the layer. Otherwise, we'll end up in a dead lock. */
-	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+	dispatch_async(dispatch_get_main_queue(), ^{
 		[self _write];
 	});
 }
@@ -231,10 +214,13 @@ M_uint16                  _mtu     = 0;
 	M_io_layer_t *layer;
 
 	(void)rfcommChannel;
+
+	if (_handle == NULL)
+		return;
+
 	layer = M_io_layer_acquire(_handle->io, 0, NULL);
 	_handle->state = M_IO_STATE_DISCONNECTED;
 	M_io_layer_softevent_add(layer, M_TRUE, M_EVENT_TYPE_DISCONNECTED, M_IO_ERROR_DISCONNECT);
-
 	M_io_layer_release(layer);
 }
 
@@ -243,6 +229,9 @@ M_uint16                  _mtu     = 0;
 	M_io_layer_t *layer;
 
 	(void)rfcommChannel;
+
+	if (_handle == NULL)
+		return;
 
 	if (dataLength == 0)
 		return;
@@ -258,6 +247,9 @@ M_uint16                  _mtu     = 0;
 	M_io_layer_t *layer;
 
 	(void)rfcommChannel;
+
+	if (_handle == NULL)
+		return;
 
 	layer = M_io_layer_acquire(_handle->io, 0, NULL);
 	if (error == kIOReturnSuccess) {
@@ -282,9 +274,13 @@ M_uint16                  _mtu     = 0;
 
 	(void)rfcommChannel;
 
+	if (_handle == NULL)
+		return;
+
 	layer = M_io_layer_acquire(_handle->io, 0, NULL);
-	if (_handle->state == M_IO_STATE_CONNECTED)
+	if (_handle->state == M_IO_STATE_CONNECTED) {
 		M_io_layer_softevent_add(layer, M_FALSE, M_EVENT_TYPE_WRITE, M_IO_ERROR_SUCCESS);
+	}
 	M_io_layer_release(layer);
 }
 
@@ -294,6 +290,9 @@ M_uint16                  _mtu     = 0;
 
 	(void)rfcommChannel;
 	(void)refcon;
+
+	if (_handle == NULL)
+		return;
 
 	layer = M_io_layer_acquire(_handle->io, 0, NULL);
 	if (error == kIOReturnSuccess) {

@@ -1433,12 +1433,19 @@ static M_event_err_t M_event_pool_loop(M_event_t *event, M_uint64 timeout_ms)
 	/* Create threads for 1->thread_count, 0 is run on the current thread */
 	for (i=1; i<event->u.pool.thread_count; i++) {
 		M_event_pool_loop_thread_arg_t *thread_arg = M_malloc_zero(sizeof(*thread_arg));
+
+		/* Bind thread to single cpu core */
+		M_thread_attr_set_processor(attr, (int)i);
+
 		thread_arg->event                          = &event->u.pool.thread_evloop[i];
 		thread_arg->timeout_ms                     = timeout_ms;
 		event->u.pool.thread_ids[i]                = M_thread_create(attr, M_event_pool_loop_thread, thread_arg);
 	}
 
 	M_thread_attr_destroy(attr);
+
+	/* Bind self to first CPU core */
+	M_thread_set_processor(M_thread_self(), 0);
 
 	rv = M_event_loop_loop(&event->u.pool.thread_evloop[0], timeout_ms);
 
@@ -1447,6 +1454,9 @@ static M_event_err_t M_event_pool_loop(M_event_t *event, M_uint64 timeout_ms)
 		void *val = NULL;
 		M_thread_join(event->u.pool.thread_ids[i], &val);
 	}
+
+	/* Unbind the main thread from the first core */
+	M_thread_set_processor(M_thread_self(), -1);
 
 	/* All threads return values should be the same */
 	return rv;

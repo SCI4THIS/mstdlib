@@ -88,6 +88,8 @@ set(slow_tests)
 if (MSTDLIB_BUILD_FORMATS)
 	list(APPEND tests
 		formats/check_csv.c
+		#formats/check_email.c
+		#formats/check_email_reader.c
 		formats/check_ini.c
 		formats/check_json.c
 		formats/check_http_reader.c
@@ -121,6 +123,7 @@ if (MSTDLIB_BUILD_IO)
 		io/check_dns.c
 		io/check_serial.c
 		io/check_pipespeed.c
+		io/check_process.c
 		io/check_netspeed.c
 		io/check_event_bwshaping.c
 	)

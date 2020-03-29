@@ -30,7 +30,6 @@
 
 static size_t MAX_START_LEN    = 6*1024;
 static size_t MAX_HEADERS_SIZE = 8*1024;
-#define READ_BUF_SIZE (8*1024)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
@@ -281,8 +280,10 @@ static M_http_error_t M_http_read_header_validate_kv(M_http_reader_t *httpr, con
 			if (httpr->data_type == M_HTTP_DATA_FORMAT_MULTIPART) {
 				return M_HTTP_ERROR_HEADER_DUPLICATE;
 			}
-
-			httpr->data_type = M_HTTP_DATA_FORMAT_MULTIPART;
+			/* Ignore the multipart if we know there is no body data. */
+			if (httpr->data_type != M_HTTP_DATA_FORMAT_NONE) {
+				httpr->data_type = M_HTTP_DATA_FORMAT_MULTIPART;
+			}
 		}
 
 		val = M_str_casestr(val, "boundary");
@@ -296,7 +297,10 @@ static M_http_error_t M_http_read_header_validate_kv(M_http_reader_t *httpr, con
 			if (M_str_isempty(val) || M_str_len(val) > 70) {
 				return M_HTTP_ERROR_MULTIPART_NOBOUNDARY;
 			}
+			/* Mulipart boundaries are prefixed with -- to signify the start
+			 * of the given boundary. */
 			M_asprintf(&httpr->boundary, "--%s", val);
+			httpr->boundary_len = M_str_len(httpr->boundary);
 		}
 	}
 
@@ -398,6 +402,14 @@ static M_http_error_t M_http_read_start_line_request(M_http_reader_t *httpr, M_p
 	if (method == M_HTTP_METHOD_UNKNOWN)
 		return M_HTTP_ERROR_REQUEST_METHOD;
 
+	/* These typically don't have a body. That said, a client **could** send a
+	 * body with these bodiless methods. In which case we need to honor
+	 * content-length and read the body. The body should be ignored but we need
+	 * to parse the full message. TRACE **should** never have a body per the spec
+	 * but people do bad things. */
+	if (method == M_HTTP_METHOD_GET || method == M_HTTP_METHOD_HEAD || method == M_HTTP_METHOD_DELETE || method == M_HTTP_METHOD_TRACE)
+		httpr->no_body_method = M_TRUE;
+
 	/* Part 2: URI */
 	uri  = M_parser_read_strdup(parts[1], M_parser_len(parts[1]));
 	http = M_http_create();
@@ -496,7 +508,7 @@ static M_http_error_t M_http_read_header(M_http_reader_t *httpr, M_parser_t *par
 		if (M_parser_len(header) == 0) {
 			break;
 		}
-		/* Eat the \r\n */
+		/* Eat the \r\n after the header. */
 		M_parser_consume(parser, 2);
 
 		httpr->header_len += M_parser_len(header);
@@ -513,32 +525,48 @@ static M_http_error_t M_http_read_header(M_http_reader_t *httpr, M_parser_t *par
 
 		/* Split the key from the value. */
 		kv = M_parser_split(header, ':', 2, M_PARSER_SPLIT_FLAG_NODELIM_ERROR, &num_kv);
-		if (kv == NULL || num_kv != 2) {
+		if (kv == NULL || num_kv == 0) {
 			res = M_HTTP_ERROR_HEADER_INVALID;
 			break;
 		}
 
-		/* Spaces between the separator (:) and value are not allowed, but we still see them.
-		 * We'll just ignore spaces. */
-		M_parser_consume_whitespace(kv[1], M_PARSER_WHITESPACE_NONE);
-
-		/* Validate we actually have a key and value.  */
-		if (M_parser_len(kv[0]) == 0 || M_parser_len(kv[1]) == 0) {
+		/* Spaces between the key and separator (:) are _NOT_allowed. */
+		if (M_parser_truncate_whitespace(kv[0], M_PARSER_WHITESPACE_NONE) != 0) {
 			res = M_HTTP_ERROR_HEADER_INVALID;
 			break;
 		}
 
+		/* Validate we actually have a key. */
+		if (M_parser_len(kv[0]) == 0) {
+			res = M_HTTP_ERROR_HEADER_INVALID;
+			break;
+		}
+
+		/* Get the key. */
 		key = M_parser_read_strdup(kv[0], M_parser_len(kv[0]));
-		val = M_parser_read_strdup(kv[1], M_parser_len(kv[1]));
 
-		M_str_trim(key);
-		M_str_trim(val);
-		if (M_str_isempty(key) || M_str_isempty(val)) {
-			res = M_HTTP_ERROR_HEADER_INVALID;
-			break;
+		/* We support a header being sent without a value. If there is a value
+ 		 * we'll pull it off. */
+		val = NULL;
+		if (num_kv == 2) {
+			/* Spaces between the separator (:) and value are allowed and should be ignored. Consume them. */
+			M_parser_consume_whitespace(kv[1], M_PARSER_WHITESPACE_NONE);
+			val = M_parser_read_strdup(kv[1], M_parser_len(kv[1]));
+			M_str_trim(val);
 		}
 
+		/* Record we saw this header. */
 		M_http_read_header_full_process(httpr, key, val);
+
+		/* Empty value means we don't need to process it any further.
+ 		 * Just inform the header was seen without a value. */
+		if (M_str_isempty(val)) {
+			res = M_http_read_header_process(httpr, key, val);
+			if (res != M_HTTP_ERROR_SUCCESS) {
+				break;
+			}
+			goto end_of_header;
+		}
 
 		/* Values can be a separated list. We want to treat these as if
 		 * the header is appearing multiple times. */
@@ -575,6 +603,7 @@ static M_http_error_t M_http_read_header(M_http_reader_t *httpr, M_parser_t *par
 			break;
 		}
 
+end_of_header:
 		M_free(key);
 		M_free(val);
 		key = NULL;
@@ -598,7 +627,6 @@ static M_http_error_t M_http_read_header(M_http_reader_t *httpr, M_parser_t *par
 
 static M_http_error_t M_http_read_body(M_http_reader_t *httpr, M_parser_t *parser, M_bool *full_read)
 {
-	unsigned char  buf[READ_BUF_SIZE];
 	size_t         len;
 	M_http_error_t res = M_HTTP_ERROR_SUCCESS;
 
@@ -611,19 +639,17 @@ static M_http_error_t M_http_read_body(M_http_reader_t *httpr, M_parser_t *parse
 	if (M_parser_len(parser) == 0)
 		return M_HTTP_ERROR_SUCCESS;
 
-	do {
-		if (httpr->have_body_len) {
-			len = M_parser_read_bytes_max(parser, M_MIN(sizeof(buf), httpr->body_len-httpr->body_len_seen), buf, sizeof(buf));
-		} else {
-			len = M_parser_read_bytes_max(parser, sizeof(buf), buf, sizeof(buf));
-		}
-		httpr->body_len_seen += len;
+	if (httpr->have_body_len) {
+		len = M_MIN(M_parser_len(parser), httpr->body_len-httpr->body_len_seen);
+	} else {
+		len = M_parser_len(parser);
+	}
 
-		res = httpr->cbs.body_func(buf, len, httpr->thunk);
-		if (res != M_HTTP_ERROR_SUCCESS) {
-			break;
-		}
-	} while ((!httpr->have_body_len && len > 0) || (httpr->have_body_len && len > 0 && httpr->body_len != httpr->body_len_seen));
+	res = httpr->cbs.body_func(M_parser_peek(parser), len, httpr->thunk);
+	if (res == M_HTTP_ERROR_SUCCESS) {
+		httpr->body_len_seen += len;
+		M_parser_consume(parser, len);
+	}
 
 	if (httpr->have_body_len && httpr->body_len == httpr->body_len_seen)
 		*full_read = M_TRUE;
@@ -748,7 +774,6 @@ done:
 
 static M_http_error_t M_http_read_chunk_data(M_http_reader_t *httpr, M_parser_t *parser, M_bool *full_read)
 {
-	unsigned char  buf[READ_BUF_SIZE];
 	size_t         len;
 	M_http_error_t res = M_HTTP_ERROR_SUCCESS;
 
@@ -761,18 +786,12 @@ static M_http_error_t M_http_read_chunk_data(M_http_reader_t *httpr, M_parser_t 
 	if (M_parser_len(parser) == 0)
 		return M_HTTP_ERROR_SUCCESS;
 
-	/* Set len to something so the loop will run if we're waiting
-	 * for body data. */
-	len = 1;
-	while (len > 0 && httpr->body_len != httpr->body_len_seen) {
-		len = M_parser_read_bytes_max(parser, M_MIN(sizeof(buf), httpr->body_len-httpr->body_len_seen), buf, sizeof(buf));
+	len = M_MIN(M_parser_len(parser), httpr->body_len-httpr->body_len_seen);
+	res = httpr->cbs.chunk_data_func(M_parser_peek(parser), len, httpr->part_idx, httpr->thunk);
+	if (res == M_HTTP_ERROR_SUCCESS) {
 		httpr->body_len_seen += len;
-
-		res = httpr->cbs.chunk_data_func(buf, len, httpr->part_idx, httpr->thunk);
-		if (res != M_HTTP_ERROR_SUCCESS) {
-			break;
-		}
-	} 
+		M_parser_consume(parser, len);
+	}
 
 	/* Chunks are trailed by \r\n which is not part of the length. */
 	if (httpr->body_len == httpr->body_len_seen &&  M_parser_len(parser) >= 2) {
@@ -848,9 +867,10 @@ done:
 
 static M_http_error_t M_http_read_multipart_preamble(M_http_reader_t *httpr, M_parser_t *parser, M_bool *full_read)
 {
-	M_parser_t     *msg = NULL;
 	M_http_error_t  res = M_HTTP_ERROR_SUCCESS;
 	M_bool          found;
+	size_t          data_len;
+	size_t          consume_len;
 
 	*full_read = M_FALSE;
 	if (M_parser_len(parser) == 0)
@@ -858,20 +878,15 @@ static M_http_error_t M_http_read_multipart_preamble(M_http_reader_t *httpr, M_p
 
 	/* Pull off all data before the first boundary. */
 	M_parser_mark(parser);
-	msg = M_parser_read_parser_boundary(parser, (const unsigned char *)httpr->boundary, M_str_len(httpr->boundary), M_FALSE, &found);
-	if (found) {
+	data_len    = M_parser_consume_boundary(parser, (const unsigned char *)httpr->boundary, httpr->boundary_len, M_FALSE, &found);
+	consume_len = data_len;
+	if (found && M_parser_len(parser) >= httpr->boundary_len + 2) {
 		/* Eat the boundary. */
 		M_parser_consume(parser, M_str_len(httpr->boundary));
 
-		if (M_parser_len(parser) <= 2) {
-			/* Less than 2 bytes left we can't know if it's an end or not. */
-			M_parser_mark_rewind(parser);
-			M_parser_destroy(msg);
-			return M_HTTP_ERROR_SUCCESS;
-		} else if (M_parser_compare_str(parser, "--", 2, M_FALSE)) {
+		if (M_parser_compare_str(parser, "--", 2, M_FALSE)) {
 			/* Check for an ending boundary to check which shouldn't be here. */
 			M_parser_mark_rewind(parser);
-			M_parser_destroy(msg);
 			return M_HTTP_ERROR_MULTIPART_MISSING_DATA;
 		} else if (M_parser_compare_str(parser, "\r\n", 2, M_FALSE)) {
 			/* End the line end. */
@@ -879,62 +894,85 @@ static M_http_error_t M_http_read_multipart_preamble(M_http_reader_t *httpr, M_p
 		} else {
 			/* We have a boundary existing in data. */
 			M_parser_mark_rewind(parser);
-			M_parser_destroy(msg);
 			return M_HTTP_ERROR_MULTIPART_INVALID;
 		}
 
-		*full_read = M_TRUE;
+		*full_read  = M_TRUE;
+		consume_len = M_parser_mark_len(parser);
 	}
-	M_parser_mark_clear(parser);
+	M_parser_mark_rewind(parser);
 
-	/* No data yet or we found the boundary and there was no data. */
-	if (msg == NULL)
-		return M_HTTP_ERROR_SUCCESS;
-
-	if (M_parser_len(msg) > 2) {
-		M_parser_mark(msg);
-		M_parser_consume(msg, M_parser_len(msg)-2);
-		if (!M_parser_compare_str(msg, "\r\n", 2, M_FALSE)) {
-			/* The boundary should start with a \r\n. The only time it doesn't
-			 * is if there is no preamble. */
+	/* The data before the boundary should end with a \r\n. The only time it
+ 	 * doesn't is if there is no preamble. The \r\n is not part of the data. */
+	if (data_len == 1) {
+		M_parser_mark_rewind(parser);
+		return M_HTTP_ERROR_MULTIPART_INVALID;
+	} else if (data_len >= 2) {
+		M_parser_mark(parser);
+		M_parser_consume(parser, data_len-2);
+		if (!M_parser_compare_str(parser, "\r\n", 2, M_FALSE)) {
+			M_parser_mark_rewind(parser);
 			return M_HTTP_ERROR_MULTIPART_INVALID;
 		}
-		M_parser_mark_rewind(msg);
-		res = httpr->cbs.multipart_preamble_func(M_parser_peek(msg), M_parser_len(msg)-2, httpr->thunk);
+		data_len -= 2;
+		M_parser_mark_rewind(parser);
 	}
 
-	M_parser_destroy(msg);
+	if (data_len != 0)
+		res = httpr->cbs.multipart_preamble_func(M_parser_peek(parser), data_len, httpr->thunk);
+
+	if (res == M_HTTP_ERROR_SUCCESS)
+		M_parser_consume(parser, consume_len);
+
 	return res;
 }
 
 static M_http_error_t M_http_read_multipart_data(M_http_reader_t *httpr, M_parser_t *parser, M_bool *full_read)
 {
-	unsigned char  buf[READ_BUF_SIZE];
-	char           boundary[128];
-	size_t         len;
+	size_t         consume_len;
+	size_t         data_len;
 	M_http_error_t res   = M_HTTP_ERROR_SUCCESS;
-	size_t         boundary_len;
 	M_bool         found = M_FALSE;
 
 	*full_read = M_FALSE;
 	if (M_parser_len(parser) == 0)
 		return M_HTTP_ERROR_SUCCESS;
 
-	M_snprintf(boundary, sizeof(boundary), "\r\n%s", httpr->boundary);
-	boundary_len = M_str_len(boundary);
-	do {
-		len = M_parser_read_bytes_boundary(parser, buf, sizeof(buf), (unsigned char *)boundary, boundary_len, M_FALSE, &found); 
-		res = httpr->cbs.multipart_data_func(buf, len, httpr->part_idx, httpr->thunk);
-		if (res != M_HTTP_ERROR_SUCCESS) {
-			break;
-		}
-		httpr->have_part = M_TRUE;
-	} while (len > 0 && !found);
+	M_parser_mark(parser);
+	consume_len = M_parser_consume_boundary(parser, (unsigned char *)httpr->boundary, httpr->boundary_len, M_FALSE, &found);
+	data_len    = consume_len;
+	M_parser_mark_rewind(parser);
 
-	if (found) {
-		/* Eat the boundary. */
-		M_parser_consume(parser, boundary_len);
-		*full_read = M_TRUE;
+	/* The data and boundary are separated by a \r\n which is not part of the data. */
+	if (data_len == 1) {
+		M_parser_mark_rewind(parser);
+		return M_HTTP_ERROR_MULTIPART_INVALID;
+	} else if (data_len >= 2) {
+		M_parser_mark(parser);
+		M_parser_consume(parser, data_len-2);
+		if (!M_parser_compare_str(parser, "\r\n", 2, M_FALSE)) {
+			M_parser_mark_rewind(parser);
+			return M_HTTP_ERROR_MULTIPART_INVALID;
+		}
+		data_len -= 2;
+		M_parser_mark_rewind(parser);
+	}
+
+	if (data_len != 0) {
+		res = httpr->cbs.multipart_data_func(M_parser_peek(parser), data_len, httpr->part_idx, httpr->thunk);
+		if (res == M_HTTP_ERROR_SUCCESS) {
+			httpr->have_part = M_TRUE;
+		}
+	}
+
+	if (res == M_HTTP_ERROR_SUCCESS) {
+		M_parser_consume(parser, consume_len);
+
+		if (found) {
+			/* Eat the boundary. */
+			M_parser_consume(parser, httpr->boundary_len);
+			*full_read = M_TRUE;
+		}
 	}
 	return res;
 }
@@ -965,7 +1003,7 @@ static M_http_error_t M_http_read_multipart_epilouge(M_http_reader_t *httpr, M_p
 
 	if (!httpr->have_epilouge) {
 		if (M_parser_len(parser) < 2) {
-			return M_HTTP_ERROR_SUCCESS;
+			goto done;
 		} else if (!M_parser_compare_str(parser, "\r\n", 2, M_FALSE)) {
 			/* If an epilogue is present it will start with a \r\n to separate it from the -- ending marker. */
 			return M_HTTP_ERROR_MULTIPART_INVALID;
@@ -979,6 +1017,7 @@ static M_http_error_t M_http_read_multipart_epilouge(M_http_reader_t *httpr, M_p
 		M_parser_consume(parser, M_parser_len(parser));
 	}
 
+done:
 	if (httpr->have_body_len && httpr->body_len == httpr->body_len_seen)
 		*full_read = M_TRUE;
 	return res;
@@ -1094,7 +1133,6 @@ M_http_error_t M_http_reader_read(M_http_reader_t *httpr, const unsigned char *d
 {
 	M_parser_t     *parser;
 	M_http_error_t  res       = M_HTTP_ERROR_SUCCESS;
-	size_t          start_len = 0;
 	size_t          mylen_read;
 	M_bool          full_read;
 
@@ -1108,15 +1146,22 @@ M_http_error_t M_http_reader_read(M_http_reader_t *httpr, const unsigned char *d
 	if (httpr->rstep == M_HTTP_READER_STEP_DONE)
 		return M_HTTP_ERROR_SUCCESS;
 
-	parser    = M_parser_create_const(data, data_len, M_PARSER_FLAG_NONE);
-	start_len = M_parser_len(parser);
+	parser = M_parser_create_const(data, data_len, M_PARSER_FLAG_NONE);
 
 	if (httpr->rstep == M_HTTP_READER_STEP_UNKNONW) {
-		/* We want to consume any and all new lines that might start the date.
+		/* We want to consume any and all new lines that might start the data.
 		 * If multiple http messages were packed together in one stream there could
 		 * be a new line at the end of the previous stream. We want to ignore this
 		 * because, while valid to be there, it's not really part of either message. */
-		M_parser_consume_whitespace(parser,M_PARSER_WHITESPACE_NONE);
+		M_parser_consume_whitespace(parser, M_PARSER_WHITESPACE_NONE);
+
+		/* No data following, we need more. Maybe there is more whitespace
+		 * following we need to eat. */
+		if (M_parser_len(parser) == 0) {
+			res = M_HTTP_ERROR_MOREDATA;
+			goto done;
+		}
+
 		if (httpr->flags & M_HTTP_READER_SKIP_START) {
 			httpr->rstep = M_HTTP_READER_STEP_HEADER;
 		} else {
@@ -1145,13 +1190,23 @@ M_http_error_t M_http_reader_read(M_http_reader_t *httpr, const unsigned char *d
 			httpr->rstep = M_HTTP_READER_STEP_CHUNK_START;
 		} else if (httpr->data_type == M_HTTP_DATA_FORMAT_MULTIPART) {
 			httpr->rstep = M_HTTP_READER_STEP_MULTIPART_PREAMBLE;
+		} else if (httpr->data_type == M_HTTP_DATA_FORMAT_BODY) {
+			if (httpr->no_body_method && !httpr->have_body_len) {
+				/* Assume no body if there is no content length and it's
+ 				 * a method that typically doesn't have a body. */
+				httpr->rstep     = M_HTTP_READER_STEP_DONE;
+				httpr->data_type = M_HTTP_DATA_FORMAT_NONE;
+			} else {
+				httpr->rstep = M_HTTP_READER_STEP_BODY;
+			}
 		} else {
-			httpr->rstep = M_HTTP_READER_STEP_BODY;
+			httpr->rstep = M_HTTP_READER_STEP_DONE;
 		}
 
 		res = httpr->cbs.header_done_func(httpr->data_type, httpr->thunk);
-		if (res != M_HTTP_ERROR_SUCCESS)
+		if (res != M_HTTP_ERROR_SUCCESS) {
 			goto done;
+		}
 	}
 
 	/* Read the body (not chunked message). */
@@ -1184,8 +1239,19 @@ M_http_error_t M_http_reader_read(M_http_reader_t *httpr, const unsigned char *d
 	}
 
 done:
-	*len_read = start_len - M_parser_len(parser);
+	*len_read = data_len - M_parser_len(parser);
 	M_parser_destroy(parser);
+
+	/* On a succesful parse determine the overall state of the message. */
+	if (res == M_HTTP_ERROR_SUCCESS) {
+		if ((httpr->data_type == M_HTTP_DATA_FORMAT_BODY && httpr->rstep == M_HTTP_READER_STEP_BODY && !httpr->have_body_len) ||
+			(httpr->data_type == M_HTTP_DATA_FORMAT_MULTIPART && httpr->rstep == M_HTTP_READER_STEP_MULTIPART_EPILOUGE && !httpr->have_body_len))
+		{
+			res = M_HTTP_ERROR_SUCCESS_MORE_POSSIBLE;
+		} else if (httpr->rstep != M_HTTP_READER_STEP_DONE) {
+			res = M_HTTP_ERROR_MOREDATA;
+		}
+	}
 	return res;
 }
 

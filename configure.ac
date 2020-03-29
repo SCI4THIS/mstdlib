@@ -663,6 +663,7 @@ if test "${build_mstdlib_thread}" = "yes" ; then
 		have_sco5="no"
 	fi
 	AC_CHECK_HEADER(pthread.h, [ have_pthreads="yes" ], [ have_pthreads="no" ])
+	AC_CHECK_HEADERS([pthread_np.h])
 	AC_CHECK_HEADERS([atomic.h])
 
 	if test "$have_pthreads" = "yes" -a "$have_sco5" = "no" ; then
@@ -704,6 +705,23 @@ if test "${build_mstdlib_thread}" = "yes" ; then
 			AC_DEFINE([HAVE_PTHREAD_RWLOCKATTR_SETKIND_NP], [], [pthread_rwlockattr_setkind_np exists])
 			AC_SUBST(HAVE_PTHREAD_RWLOCKATTR_SETKIND_NP)
 		fi
+		AC_CHECK_DECL(pthread_setaffinity_np, [ pthread_setaffinity_np="yes"], [ pthread_setaffinity_np="no" ], [ #include <pthread.h> ])
+		if test "$pthread_setaffinity_np" = "yes" ; then
+			AC_DEFINE([HAVE_PTHREAD_SETAFFINITY_NP], [], [pthread_setaffinity_np exists])
+			AC_SUBST(HAVE_PTHREAD_SETAFFINITY_NP)
+		fi
+		AC_CHECK_DECL(sched_setaffinity, [ sched_setaffinity="yes"], [ sched_setaffinity="no" ], [ #include <sched.h> ])
+		if test "$sched_setaffinity" = "yes" ; then
+			AC_DEFINE([HAVE_SCHED_SETAFFINITY], [], [sched_setaffinity exists])
+			AC_SUBST(HAVE_SCHED_SETAFFINITY)
+		fi
+
+		AC_CHECK_TYPE(cpu_set_t, [ AC_DEFINE(HAVE_CPU_SET_T, [], [cpu_set_t]) ], [ ] , [
+#include <pthread.h>
+		] )
+		AC_CHECK_TYPE(cpuset_t, [ AC_DEFINE(HAVE_CPUSET_T, [], [cpuset_t]) ], [ ] , [
+#include <pthread_np.h>
+		] )
 
 		dnl -------------------- CHECKING TO SEE IF _REENTRANT IS VALID --------------------
 		AC_MSG_CHECKING(to see if defining _REENTRANT works)
@@ -801,6 +819,11 @@ if test "${build_mstdlib_io}" = "yes" ; then
 	AC_CHECK_FUNC(pipe2, [ have_pipe2="yes" ], [ have_pipe2="no"])
 	if test "$have_pipe2" = "yes" ; then
 		AC_DEFINE([HAVE_PIPE2], [], [Use pipe2 for SOCK_CLOEXEC])
+	fi
+
+	AC_CHECK_FUNC(confstr, [ have_confstr="yes" ], [ have_confstr="no"])
+	if test "$have_confstr" = "yes" ; then
+		AC_DEFINE([HAVE_CONFSTR], [], [Use confstr() for fallback path])
 	fi
 
 	dnl chain build if thirdparty/c-ares exists, otherwise search for it

@@ -5,7 +5,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMakeModules/")
 include(DefaultBuildType)
 
 project(Mstdlib
-	VERSION   1.8.0
+	VERSION   1.11.0
 	LANGUAGES C
 )
 
@@ -285,9 +285,16 @@ if (MSTDLIB_BUILD_THREAD)
 
 		# PThread functions.
 		check_include_files(pthread.h                                 HAVE_PTHREAD_H)
+		check_include_files(pthread_np.h                              HAVE_PTHREAD_NP_H)
 		check_library_exists(pthread pthread_yield                 "" HAVE_PTHREAD_YIELD)
 		check_library_exists(pthread pthread_rwlock_init           "" HAVE_PTHREAD_RWLOCK_INIT)
 		check_library_exists(pthread pthread_rwlockattr_setkind_np "" HAVE_PTHREAD_RWLOCKATTR_SETKIND_NP)
+		check_library_exists(pthread pthread_setaffinity_np        "" HAVE_PTHREAD_SETAFFINITY_NP)
+		list_append_if_set(check_extra_includes HAVE_PTHREAD_H     pthread.h)
+		list_append_if_set(check_extra_includes HAVE_PTHREAD_NP_H  pthread_np.h)
+		mstdlib_type_exists(cpu_set_t "${check_extra_includes}" HAVE_CPU_SET_T)
+		mstdlib_type_exists(cpuset_t  "${check_extra_includes}" HAVE_CPUSET_T)
+		check_symbol_exists(sched_setaffinity "${check_extra_includes}" HAVE_SCHED_SETAFFINITY)
 
 		if (HAVE_PTHREAD_H)
 			check_symbol_exists(pthread_init "pthread.h" HAVE_PTHREAD_INIT)
@@ -304,6 +311,7 @@ if (MSTDLIB_BUILD_THREAD)
 		check_symbol_exists(poll      "${check_extra_includes}" HAVE_POLL)
 		check_symbol_exists(select    "${check_extra_includes}" HAVE_SELECT)
 		check_symbol_exists(nanosleep "${check_extra_includes}" HAVE_NANOSLEEP)
+
 
 		if ((CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NOT IOS AND NOT IOSSIM)
 			OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"
@@ -353,6 +361,7 @@ if (MSTDLIB_BUILD_IO)
 	check_symbol_exists(epoll_create1 "${check_extra_includes}" HAVE_EPOLL_CREATE1)
 	check_symbol_exists(kqueue        "${check_extra_includes}" HAVE_KQUEUE)
 	check_symbol_exists(pipe2         "${check_extra_includes}" HAVE_PIPE2)
+	check_symbol_exists(confstr       "${check_extra_includes}" HAVE_CONFSTR)
 
 	mstdlib_type_exists(socklen_t                 "${check_extra_includes}" HAVE_SOCKLEN_T)
 	mstdlib_type_exists("struct sockaddr_storage" "${check_extra_includes}" HAVE_SOCKADDR_STORAGE)
