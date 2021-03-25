@@ -1,17 +1,17 @@
 /* The MIT License (MIT)
- * 
+ *
  * Copyright (c) 2015 Monetra Technologies, LLC.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -39,7 +39,7 @@ M_hash_dict_t *M_hash_dict_create(size_t size, M_uint8 fillpct, M_uint32 flags)
 		M_hash_void_strdup,
 		M_hash_void_strdup,
 		NULL,
-		M_free	
+		M_free
 	};
 
 	/* Key options. */
@@ -293,6 +293,11 @@ static M_hashdict_quote_type_t M_hash_dict_serialize_quotetype(const char *val, 
 	if (val == NULL)
 		return quote_type;
 
+	/* Beginning or ending with space needs to be quoted so it isn't stripped */
+	if (M_chr_isspace(val[0]) || M_chr_isspace(val[val_len-1])) {
+		quote_type = M_HASHDICT_QUOTE_TYPE_ON;
+	}
+
 	for (i=0; i<val_len; i++) {
 		if (quote_type == M_HASHDICT_QUOTE_TYPE_OFF) {
 			if ((flags & M_HASH_DICT_SER_FLAG_QUOTE_NON_ANS && !M_chr_isalnumsp(val[i])) ||
@@ -301,8 +306,9 @@ static M_hashdict_quote_type_t M_hash_dict_serialize_quotetype(const char *val, 
 			}
 		}
 
-		if (val[i] == quote || val[i] == escape)
+		if (val[i] == quote || val[i] == escape || (!M_chr_isprint(val[i]) && flags & M_HASH_DICT_SER_FLAG_HEXENCODE_NONPRINT)) {
 			return M_HASHDICT_QUOTE_TYPE_ESCAPE;
+		}
 	}
 	return quote_type;
 }
@@ -341,7 +347,12 @@ M_bool M_hash_dict_serialize_buf(M_hash_dict_t *dict, M_buf_t *buf, char delim, 
 			for ( ; *val != '\0'; val++) {
 				if (*val == quote || *val == escape)
 					M_buf_add_byte(buf, (unsigned char)escape);
-				M_buf_add_byte(buf, (unsigned char)*val);
+
+				if (!M_chr_isprint(*val) && flags & M_HASH_DICT_SER_FLAG_HEXENCODE_NONPRINT) {
+					M_bprintf(buf, "[%02X]", (unsigned int)*val);
+				} else {
+					M_buf_add_byte(buf, (unsigned char)*val);
+				}
 			}
 		} else {
 			M_buf_add_str(buf, val);
@@ -416,7 +427,7 @@ static char *M_hash_dict_fromstr_unquote(const char *str, char quote, char escap
 }
 
 
-M_hash_dict_t *M_hash_dict_deserialize(const char *str, char delim, char kv_delim, char quote, char escape, M_uint32 flags)
+M_hash_dict_t *M_hash_dict_deserialize(const char *str, size_t len, char delim, char kv_delim, char quote, char escape, M_uint32 flags)
 {
 	M_hash_dict_t  *dict    = NULL;
 	char          **kvs     = NULL;
@@ -429,14 +440,20 @@ M_hash_dict_t *M_hash_dict_deserialize(const char *str, char delim, char kv_deli
 	if (M_str_isempty(str)) {
 		return NULL;
 	}
-	kvs = M_str_explode_str_quoted((unsigned char)delim, str, (unsigned char)quote, (unsigned char)escape, 0, &num_kvs);
+	kvs = M_str_explode_quoted((unsigned char)delim, str, len, (unsigned char)quote, (unsigned char)escape, 0, &num_kvs, NULL);
 	if (kvs == NULL) {
 		goto cleanup;
 	}
 
-	dict = M_hash_dict_create(16, 75, (flags & M_HASH_DICT_DESER_FLAG_CASECMP)?M_HASH_DICT_CASECMP:M_HASH_DICT_NONE);
+	dict = M_hash_dict_create(16, 75, flags);
 	for (i=0; i<num_kvs; i++) {
 		char *temp;
+
+		if (flags & M_HASH_DICT_DESER_TRIM_WHITESPACE) {
+			/* Discard leading and trailing whitespace.  Trailing whitespace might be something like '\r' */
+			M_str_trim(kvs[i]);
+		}
+
 		/* Skip blank lines, should really only be the last line */
 		if (M_str_isempty(kvs[i]))
 			continue;
@@ -444,6 +461,12 @@ M_hash_dict_t *M_hash_dict_deserialize(const char *str, char delim, char kv_deli
 		kv = M_str_explode_str_quoted((unsigned char)kv_delim, kvs[i], (unsigned char)quote, (unsigned char)escape, 2, &num_kv);
 		if (kv == NULL || num_kv != 2) {
 			goto cleanup;
+		}
+
+		if (flags & M_HASH_DICT_DESER_TRIM_WHITESPACE) {
+			/* Trim whitespace from both key and value. Quotes should have been used to protect any legit leading or trailing spaces. */
+			M_str_trim(kv[0]);
+			M_str_trim(kv[1]);
 		}
 
 		/* Remove quotes */

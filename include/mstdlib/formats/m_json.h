@@ -1,17 +1,17 @@
 /* The MIT License (MIT)
- * 
+ *
  * Copyright (c) 2015 Monetra Technologies, LLC.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -40,11 +40,19 @@ __BEGIN_DECLS
  *
  * Mostly EMCA-404 compliant JSON manipulation.
  *
+ * Number handling while writing:
+ * - Integrals are limited a range of -(2^53)+1 to (2^53)-1 for Java Script
+ *   compatibility. Larger numbers will be encoded as a string.
+ * - Decimals are limited to 15 places for Java Script compatibility. Larger
+ *   precision decimals will be encoded as strings.
+ * - Number to string compatibility conversion can be disabled with the
+ *   M_JSON_WRITER_NUMBER_NOCOMPAT flag.
+ *
  * Additional Features:
  * - Comments (C/C++)
  *
  * Also supports most of Stefan Gössner's JSONPath for searching.
- * Not support are features considered redundant or potential
+ * Not supported are features considered redundant or potential
  * security risks (script expressions).
  *
  * Example:
@@ -109,7 +117,7 @@ typedef enum {
 	M_JSON_READER_ALLOW_DECIMAL_TRUNCATION = 1 << 0, /*!< Allow decimal truncation. A decimal read and truncated will
 	                                                      not be treated as an error. */
 	M_JSON_READER_DISALLOW_COMMENTS        = 1 << 1, /*!< Treat comments as an error. */
-	M_JSON_READER_OBJECT_UNIQUE_KEYS       = 1 << 2, /*!< Return a parse error when an object has repeating keys. By	
+	M_JSON_READER_OBJECT_UNIQUE_KEYS       = 1 << 2, /*!< Return a parse error when an object has repeating keys. By
 	                                                      default the later key in the object will be the one used and
 	                                                      earlier keys ignored. This requires all keys in the object to
 	                                                      be unique. */
@@ -130,7 +138,9 @@ typedef enum {
 	                                                    Requires space or tab pretty printing. */
 	M_JSON_WRITER_DONT_ENCODE_UNICODE    = 1 << 3, /*!< By default utf-8 characters will be enocded into unicode
 	                                                    escapes. */
-	M_JSON_WRITER_REPLACE_BAD_CHARS      = 1 << 4  /*!< Replace bad characters (invalid utf-8 sequences with "?"). */
+	M_JSON_WRITER_REPLACE_BAD_CHARS      = 1 << 4, /*!< Replace bad characters (invalid utf-8 sequences with "?"). */
+	M_JSON_WRITER_NUMBER_NOCOMPAT        = 1 << 5  /*!< Write numbers as they are instead of limiting to Java Script
+	                                                    minimum and maximum sizes. */
 } M_json_writer_flags_t;
 
 
@@ -153,7 +163,7 @@ typedef enum {
 	M_JSON_ERROR_UNCLOSED_ARRAY,           /*!< expected ']' to close array */
 	M_JSON_ERROR_UNEXPECTED_NEWLINE,       /*!< unexpected newline */
 	M_JSON_ERROR_UNEXPECTED_CONTROL_CHAR,  /*!< unexpected control character */
-	M_JSON_ERROR_INVALID_UNICODE_ESACPE,   /*!< invalid unicode escape */ 
+	M_JSON_ERROR_INVALID_UNICODE_ESACPE,   /*!< invalid unicode escape */
 	M_JSON_ERROR_UNEXPECTED_ESCAPE,        /*!< unexpected escape */
 	M_JSON_ERROR_UNCLOSED_STRING,          /*!< unclosed string */
 	M_JSON_ERROR_INVALID_BOOL,             /*!< invalid bool value */
@@ -228,7 +238,7 @@ M_API M_json_node_t *M_json_read_file(const char *path, M_uint32 flags, size_t m
  * This writes nodes to a string. The string may not be directly usable by M_json_read.
  * E.g. If you are only writing a string node.
  *
- * \param[in]  node  The node to write. This will write the node and any nodes under it. 
+ * \param[in]  node  The node to write. This will write the node and any nodes under it.
  * \param[in]  flags M_json_writer_flags_t flags to control writing.
  * \param[out] len   The length of the string that was returned. Optional, pass NULL if not needed.
  *
@@ -242,7 +252,7 @@ M_API char *M_json_write(const M_json_node_t *node, M_uint32 flags, size_t *len)
  * This writes nodes to a string. The string may not be directly usable by M_json_read_file (for example)
  * if you are only writing a string node (for example).
  *
- * \param[in] node  The node to write. This will write the node and any nodes under it. 
+ * \param[in] node  The node to write. This will write the node and any nodes under it.
  * \param[in] path  The filename and path to write the data to.
  * \param[in] flags M_json_writer_flags_t flags to control writing.
  *
@@ -280,7 +290,7 @@ M_API M_json_type_t M_json_node_type(const M_json_node_t *node);
  * or .. to search for the first matching element.
  *
  * Supports:
- *  - Patterns containing ".", "*", "..". 
+ *  - Patterns containing ".", "*", "..".
  *  - Array offsets using [*]/[]/[,]/[start:end:step].
  *    - Positive offsets [0], [0,2].
  *    - Negative offsets [-1] (last item). [-2] (second to last item).
@@ -299,7 +309,7 @@ M_API M_json_type_t M_json_node_type(const M_json_node_t *node);
  * \return array of M_json_node_t pointers on success (must free array, but not internal pointers), NULL on failure
  *
  * \see M_free
- */ 
+ */
 M_API M_json_node_t **M_json_jsonpath(const M_json_node_t *node, const char *search, size_t *num_matches) M_MALLOC;
 
 
@@ -542,7 +552,7 @@ M_API M_bool M_json_array_at_bool(const M_json_node_t *node, size_t idx);
  * \param[in]     value The value node to append.
  *
  * \return M_TRUE if the value was appended otherwise M_FALSE.
- */ 
+ */
 M_API M_bool M_json_array_insert(M_json_node_t *node, M_json_node_t *value);
 
 
@@ -552,7 +562,7 @@ M_API M_bool M_json_array_insert(M_json_node_t *node, M_json_node_t *value);
  * \param[in]     value The value to append.
  *
  * \return M_TRUE if the value was appended otherwise M_FALSE.
- */ 
+ */
 M_API M_bool M_json_array_insert_string(M_json_node_t *node, const char *value);
 
 
@@ -562,7 +572,7 @@ M_API M_bool M_json_array_insert_string(M_json_node_t *node, const char *value);
  * \param[in]     value The value to append.
  *
  * \return M_TRUE if the value was appended otherwise M_FALSE.
- */ 
+ */
 M_API M_bool M_json_array_insert_int(M_json_node_t *node, M_int64 value);
 
 
@@ -572,7 +582,7 @@ M_API M_bool M_json_array_insert_int(M_json_node_t *node, M_int64 value);
  * \param[in]     value The value to append.
  *
  * \return M_TRUE if the value was appended otherwise M_FALSE.
- */ 
+ */
 M_API M_bool M_json_array_insert_decimal(M_json_node_t *node, const M_decimal_t *value);
 
 
@@ -582,7 +592,7 @@ M_API M_bool M_json_array_insert_decimal(M_json_node_t *node, const M_decimal_t 
  * \param[in]     value The value to append.
  *
  * \return M_TRUE if the value was appended otherwise M_FALSE.
- */ 
+ */
 M_API M_bool M_json_array_insert_bool(M_json_node_t *node, M_bool value);
 
 
@@ -593,7 +603,7 @@ M_API M_bool M_json_array_insert_bool(M_json_node_t *node, M_bool value);
  * \param[in]     idx   The index to insert at.
  *
  * \return M_TRUE if the value was inserted otherwise M_FALSE.
- */ 
+ */
 M_API M_bool M_json_array_insert_at(M_json_node_t *node, M_json_node_t *value, size_t idx);
 
 
@@ -604,7 +614,7 @@ M_API M_bool M_json_array_insert_at(M_json_node_t *node, M_json_node_t *value, s
  * \param[in]     idx   The index to insert at.
  *
  * \return M_TRUE if the value was inserted otherwise M_FALSE.
- */ 
+ */
 M_API M_bool M_json_array_insert_at_string(M_json_node_t *node, const char *value, size_t idx);
 
 
@@ -615,7 +625,7 @@ M_API M_bool M_json_array_insert_at_string(M_json_node_t *node, const char *valu
  * \param[in]     idx   The index to insert at.
  *
  * \return M_TRUE if the value was inserted otherwise M_FALSE.
- */ 
+ */
 M_API M_bool M_json_array_insert_at_int(M_json_node_t *node, M_int64 value, size_t idx);
 
 
@@ -626,7 +636,7 @@ M_API M_bool M_json_array_insert_at_int(M_json_node_t *node, M_int64 value, size
  * \param[in]     idx   The index to insert at.
  *
  * \return M_TRUE if the value was inserted otherwise M_FALSE.
- */ 
+ */
 M_API M_bool M_json_array_insert_at_decimal(M_json_node_t *node, const M_decimal_t *value, size_t idx);
 
 
@@ -637,7 +647,7 @@ M_API M_bool M_json_array_insert_at_decimal(M_json_node_t *node, const M_decimal
  * \param[in]     idx   The index to insert at.
  *
  * \return M_TRUE if the value was inserted otherwise M_FALSE.
- */ 
+ */
 M_API M_bool M_json_array_insert_at_bool(M_json_node_t *node, M_bool value, size_t idx);
 
 

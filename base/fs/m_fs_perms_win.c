@@ -154,7 +154,7 @@ static __inline__ M_bool M_fs_perms_to_dacl_entry(const M_bool *isdir,
 		perms |= GENERIC_READ|FILE_GENERIC_READ;
 	}
 	if (mymode & M_FS_PERMS_MODE_WRITE) {
-		perms |= GENERIC_WRITE|FILE_GENERIC_WRITE;
+		perms |= GENERIC_WRITE|FILE_GENERIC_WRITE|DELETE;
 	}
 	if (mymode & M_FS_PERMS_MODE_EXEC) {
 		perms |= GENERIC_EXECUTE|FILE_GENERIC_EXECUTE;
@@ -318,7 +318,7 @@ M_fs_error_t M_fs_perms_to_security_attributes(M_fs_perms_t *perms, PSID everyon
 {
 	char          proc_username[UNLEN+1];
 	DWORD         proc_username_len;
-	M_fs_error_t  res;
+	M_fs_error_t  res = M_FS_ERROR_GENERIC;
 
 	if (perms == NULL || acl == NULL || sa == NULL || sd == NULL) {
 		return M_FS_ERROR_INVALID;
@@ -341,14 +341,15 @@ M_fs_error_t M_fs_perms_to_security_attributes(M_fs_perms_t *perms, PSID everyon
 	res = M_fs_perms_to_dacl(perms, everyone_sid, acl, M_FALSE);
 	if (res != M_FS_ERROR_SUCCESS)
 		return res;
+
 	/* Create a security descripitor to add the perms and user and group to */
 	if (!InitializeSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION)) {
 		LocalFree(*acl);
-		return res;
+		return M_FS_ERROR_GENERIC;
 	}
 	if (!SetSecurityDescriptorDacl(sd, TRUE, *acl, FALSE)) {
 		LocalFree(*acl);
-		return res;
+		return M_FS_ERROR_GENERIC;
 	}
 	res = M_fs_perms_set_sd_user(perms, sd);
 	if (res != M_FS_ERROR_SUCCESS) {
@@ -415,6 +416,7 @@ M_fs_error_t M_fs_perms_set_perms(const M_fs_perms_t *perms, const char *path)
 
 	/* Convert the perms to a dacl. */
 	res = M_fs_perms_to_dacl(myperms, everyone_sid, &acl, isdir);
+	M_fs_perms_destroy(myperms);
 	if (res != M_FS_ERROR_SUCCESS) {
 		LocalFree(everyone_sid);
 		M_free(norm_path);
@@ -448,6 +450,36 @@ M_fs_error_t M_fs_perms_set_perms(const M_fs_perms_t *perms, const char *path)
 
 M_fs_error_t M_fs_perms_set_perms_file(const M_fs_perms_t *perms, M_fs_file_t *fd)
 {
+	char         *path;
+	size_t        len;
+	size_t        ret;
+	M_fs_error_t  err;
+
+	if (perms == NULL || fd == NULL)
+		return M_FS_ERROR_INVALID;
+
+	len  = M_fs_path_get_path_max(M_FS_SYSTEM_WINDOWS);
+	path = M_malloc_zero(len);
+
+	ret = GetFinalPathNameByHandle(fd->fd, path, len, FILE_NAME_NORMALIZED|VOLUME_NAME_DOS);
+	if (ret >= len) {
+		M_free(path);
+		return M_fs_error_from_syserr(GetLastError());
+	}
+
+	err = M_fs_perms_set_perms(perms, path);
+	M_free(path);
+	return err;
+
+	/* This is the proper way to handle this by working on the FD directly.
+	 * We're not using this because the file must be opened with the WRITE_DAC
+	 * access mode which our open function does not set. It does not set this
+	 * because if you try to open a file and request WRITE_DAC but don't have
+	 * perms for writing to the ACL open will fail. This is almost guaranteed
+	 * if you're opening a file owned by someone else. So instead of doing thing
+	 * properly we do the above.
+	 */
+#if 0
 	M_fs_info_t          *info;
 	M_fs_error_t          res;
 	DWORD                 ret;
@@ -482,6 +514,7 @@ M_fs_error_t M_fs_perms_set_perms_file(const M_fs_perms_t *perms, M_fs_file_t *f
 
 	/* Convert the perms to a dacl. */
 	res = M_fs_perms_to_dacl(myperms, everyone_sid, &acl, isdir);
+	M_fs_perms_destroy(myperms);
 	if (res != M_FS_ERROR_SUCCESS) {
 		LocalFree(everyone_sid);
 		return res;
@@ -508,6 +541,7 @@ M_fs_error_t M_fs_perms_set_perms_file(const M_fs_perms_t *perms, M_fs_file_t *f
 	LocalFree(acl);
 
 	return M_FS_ERROR_SUCCESS;
+#endif
 }
 
 M_fs_error_t M_fs_perms_can_access(const char *path, M_uint32 mode)

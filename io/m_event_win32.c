@@ -1,17 +1,17 @@
 /* The MIT License (MIT)
- * 
+ *
  * Copyright (c) 2017 Monetra Technologies, LLC.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -53,7 +53,7 @@
  *     WAIT_ABANDONED_0 will be emitted which will then just be ignored and
  *     will regenerate the wait list before sleeping again.
  *   * Must be able to handle the fact that a triggered event may no longer
- *     be for an event handle we own.  This could happen if delivery of a 
+ *     be for an event handle we own.  This could happen if delivery of a
  *     prior event resulted in removal of a subsequent event handle.
  */
 #include "m_config.h"
@@ -67,7 +67,7 @@
 #define TIMER_SETEVENT 2 /*!< Uses timeSetEvent() from the Multimedia Timers for timers, Microsoft says these are deprecated. */
 #define TIMER_TIMEOUT  3 /*!< Uses the timeout parameter for WaitForMultipleObjects() for timers */
 /*! Set the desired timer method to use */
-#define TIMER_METHOD   TIMER_TIMEOUT
+#define TIMER_METHOD   TIMER_WAITABLE   /* Its possible we are seeing issues with TIMER_TIMEOUT in some instances */
 
 #if TIMER_METHOD == TIMER_SETEVENT
 #  include <mmsystem.h>
@@ -167,12 +167,12 @@ static void M_event_impl_win32_shutdownthreads(M_event_data_t *data)
 static void M_event_impl_win32_data_free(M_event_data_t *data)
 {
 	size_t i;
-	
+
 	if (data == NULL)
 		return;
 
 	M_event_impl_win32_shutdownthreads(data);
-	
+
 	for (i=0; i<M_list_len(data->threads); i++) {
 		const void             *ptr    = M_list_at(data->threads, i);
 		M_event_win32_thread_t *thread = M_CAST_OFF_CONST(M_event_win32_thread_t *, ptr);
@@ -196,12 +196,6 @@ static void M_event_impl_win32_signal(M_event_data_t *data, M_EVENT_HANDLE handl
 {
 	/* Enqueue the result into the parent's event list */
 	M_list_insert(data->signalled, handle);
-
-	/* Wake up any threads waiting on events if we're changing the state */
-	if (data->state == M_EVENT_WIN32_STATE_WAITEVENT)
-		M_event_impl_win32_wakeall(data);
-
-	data->state = M_EVENT_WIN32_STATE_PREPARING;
 }
 
 
@@ -228,14 +222,17 @@ static void *M_event_impl_win32_eventthread(void *arg)
 
 					nhandles   = M_llist_len(threaddata->events) + 1;
 #if TIMER_METHOD == TIMER_WAITABLE || TIMER_METHOD == TIMER_SETEVENT
-					nhandles++;
+					if (threaddata->idx == 0)
+						nhandles++;
 #endif
 					handles    = M_malloc_zero(sizeof(*handles) * nhandles);
 					handles[0] = threaddata->wake;
 					nhandles   = 1;
 #if TIMER_METHOD == TIMER_WAITABLE || TIMER_METHOD == TIMER_SETEVENT
-					handles[1] = threaddata->parent->waittimer;
-					nhandles++;
+					if (threaddata->idx == 0) {
+						handles[1] = threaddata->parent->waittimer;
+						nhandles++;
+					}
 #endif
 					node       = M_llist_first(threaddata->events);
 					for (; node != NULL; nhandles++) {
@@ -273,7 +270,7 @@ static void *M_event_impl_win32_eventthread(void *arg)
 					if (threaddata->parent->timeout_ms != M_TIMEOUT_INF && threaddata->parent->timeout_ms != 0) {
 						LARGE_INTEGER liDueTime;
 						/* Represented in 100ns intervals, negative offset means relative */
-						liDueTime.QuadPart = -1 * threaddata->parent->timeout_ms * 10000;
+						liDueTime.QuadPart = -1 * ((M_int64)threaddata->parent->timeout_ms) * 10000;
 						SetWaitableTimer(threaddata->parent->waittimer, &liDueTime, 0, NULL, NULL, 0);
 					} else {
 						CancelWaitableTimer(threaddata->parent->waittimer);
@@ -294,11 +291,26 @@ static void *M_event_impl_win32_eventthread(void *arg)
 #endif
 				}
 
+#if 1
+				/* We've had a couple of very infrequent reports of what appear to be timers not delivered
+				 * (for hours) on Windows systems with UniTerm.  Adding some failsafe to wake very 10s to
+				 * see if this is the case or not. */
+				if (threaddata->idx == 0 && timeout == INFINITE) {
+					timeout = 10 * 1000;
+				}
+#endif
+
 				M_thread_mutex_unlock(threaddata->parent->lock);
 
 				retval = WaitForMultipleObjects((DWORD)nhandles, handles, FALSE, timeout);
 
 				M_thread_mutex_lock(threaddata->parent->lock);
+
+				/* Force all other threads to wake up to see if they had anything to process.  Might be wasteful, but this is windows afterall */
+				M_event_impl_win32_wakeall(threaddata->parent);
+				threaddata->parent->state = M_EVENT_WIN32_STATE_PREPARING;
+
+
 #if TIMER_METHOD == TIMER_SETEVENT
 				if (threaddata->idx == 0 && threaddata->parent->timerhandle != 0) {
 					/* See if timer event fired */
@@ -317,7 +329,7 @@ static void *M_event_impl_win32_eventthread(void *arg)
 
 				/* Process all events that were triggered */
 				if (
-#if 0 
+#if 0
 /* WAIT_OBJECT_0 is defined as 0, wonder why they even define it?
  * Don't emit this code as it will just cause a warning.
  */
@@ -524,11 +536,6 @@ static M_bool M_event_impl_win32_wait(M_event_t *event, M_uint64 timeout_ms)
 
 	/* Signal threads if necessary and wait for them to finish */
 	M_thread_mutex_lock(data->lock);
-	if (data->state == M_EVENT_WIN32_STATE_WAITEVENT) {
-		/* This should only be true if a timeout occurred */
-		M_event_impl_win32_wakeall(data);
-		data->state = M_EVENT_WIN32_STATE_PREPARING;
-	}
 
 	while (data->num_threads_blocking) {
 		M_thread_cond_wait(data->cond, data->lock);
@@ -552,7 +559,7 @@ static void M_event_impl_win32_process(M_event_t *event)
 	/* NOTE: shouldn't need to lock as we should be guaranteed that there will
 	 *       be no modifications to data->signalled since all threads are blocking */
 	while ((handle = M_list_take_first(data->signalled)) != NULL) {
-		/* Lets look up the metadata about this event handle so we can rewrite it 
+		/* Lets look up the metadata about this event handle so we can rewrite it
 		 * appropriately */
 		M_event_evhandle_t     *member  = NULL;
 		M_event_type_t          type    = M_EVENT_TYPE_OTHER;

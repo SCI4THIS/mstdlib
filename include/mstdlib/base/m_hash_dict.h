@@ -1,17 +1,17 @@
 /* The MIT License (MIT)
- * 
+ *
  * Copyright (c) 2015 Monetra Technologies, LLC.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -75,13 +75,14 @@ typedef enum {
 	M_HASH_DICT_MULTI_GETLAST  = 1 << 9,  /*!< When using get and get_direct function get the last value from the list
 	                                           when allowing multiple values. The default is to get the first value. */
 	M_HASH_DICT_MULTI_CASECMP  = 1 << 10, /*!< Value compare is case insensitive. */
-	M_HASH_DICT_STATIC_SEED    = 1 << 11  /*!< Use a static seed for hash function initialization. This greatly reduces
+	M_HASH_DICT_STATIC_SEED    = 1 << 11, /*!< Use a static seed for hash function initialization. This greatly reduces
 	                                           the security of the hashtable and removes collision attack protections.
 	                                           This should only be used as a performance optimization when creating
 	                                           millions of hashtables with static data specifically for quick look up.
 	                                           DO _NOT_ use this flag with any hashtable that could store user
 	                                           generated data! Be very careful about duplicating a hashtable that
 	                                           was created with this flag. All duplicates will use the static seed. */
+	M_HASH_DICT_DESER_TRIM_WHITESPACE = 1 << 26, /*!< During deserialization, trim whitespace. */
 } M_hash_dict_flags_t;
 
 
@@ -119,7 +120,7 @@ M_API void M_hash_dict_destroy(M_hash_dict_t *h) M_FREE(1);
 
 /*! Insert an entry into the hashtable.
  *
- * If this is a multi-value dictionary (see M_HASH_DICT_MULTI_VALUE) and an entry already
+ * If this is a multi-value dictionary (\see M_HASH_DICT_MULTI_VALUE) and an entry already
  * exists under the given key, the new value is added onto the end of the list. Otherwise,
  * the new value replaces any previous value stored under the given key.
  *
@@ -145,7 +146,7 @@ M_API M_bool M_hash_dict_insert(M_hash_dict_t *h, const char *key, const char *v
 M_API M_bool M_hash_dict_remove(M_hash_dict_t *h, const char *key);
 
 
-/*! Retrieve the value for a key from the hashtable. 
+/*! Retrieve the value for a key from the hashtable.
  *
  * \param[in] h      Hashtable being referenced.
  * \param[in] key    Key for value.
@@ -198,7 +199,7 @@ M_bool M_hash_dict_is_multi(const M_hash_dict_t *h);
 /*! Get the number of values for a given key.
  *
  * \param[in]  h   Hashtable being referenced.
- * \param[in]  key Key for value to retrieve. 
+ * \param[in]  key Key for value to retrieve.
  * \param[out] len The number of values.
  *
  * \return M_TRUE if length is retrieved, M_FALSE if key does not exist.
@@ -350,9 +351,10 @@ M_API M_hash_dict_t *M_hash_dict_duplicate(const M_hash_dict_t *h) M_MALLOC;
 
 /*! Possible flags for M_hash_dict_serialize() */
 typedef enum {
-	M_HASH_DICT_SER_FLAG_NONE          = 0,      /*!< Default flags */
-	M_HASH_DICT_SER_FLAG_ALWAYS_QUOTE  = 1 << 0, /*!< Always quote the value even if not necesary. Cannot be used with M_HASH_DICT_SER_FLAG_ALWAYS_QUOTE */
-	M_HASH_DICT_SER_FLAG_QUOTE_NON_ANS = 1 << 1  /*!< Quote any string that contains non Alpha-numeric or single space (0x20).  Cannot be used with M_HASH_DICT_SER_FLAG_ALWAYS_QUOTE */
+	M_HASH_DICT_SER_FLAG_NONE               = 0,      /*!< Default flags */
+	M_HASH_DICT_SER_FLAG_ALWAYS_QUOTE       = 1 << 0, /*!< Always quote the value even if not necessary. Cannot be used with M_HASH_DICT_SER_FLAG_QUOTE_NON_ANS */
+	M_HASH_DICT_SER_FLAG_QUOTE_NON_ANS      = 1 << 1, /*!< Quote any string that contains non Alpha-numeric or single space (0x20).  Cannot be used with M_HASH_DICT_SER_FLAG_ALWAYS_QUOTE */
+	M_HASH_DICT_SER_FLAG_HEXENCODE_NONPRINT = 1 << 2, /*!< Any non-printable characters should be hex-encoded as [%02X] in the resulting output string */
 } M_hash_dict_ser_flag_t;
 
 
@@ -383,23 +385,18 @@ M_API M_bool M_hash_dict_serialize_buf(M_hash_dict_t *dict, M_buf_t *buf, char d
 M_API char *M_hash_dict_serialize(M_hash_dict_t *dict, char delim, char kv_delim, char quote, char escape, M_uint32 flags);
 
 
-/*! Possible flags for M_hash_dict_deserialize() */
-typedef enum {
-	M_HASH_DICT_DESER_FLAG_NONE    = 0,
-	M_HASH_DICT_DESER_FLAG_CASECMP = 1 << 0,
-} M_hash_dict_deser_flag_t;
-
 /*! Deserialize a string into a hashtable as per the definition.
  *
  * \param[in] str      String to deserialize
+ * \param[in] len      Length of string
  * \param[in] delim    Delimiter between key/value pairs (recommended ';')
  * \param[in] kv_delim Delimiter between the key and value (recommended '=')
  * \param[in] quote    Quote character (recommended '"')
  * \param[in] escape   Escape character (recommended '\' or '"')
- * \param[in] flags    Bitmap of possible M_hash_dict_deser_flag_t flags
+ * \param[in] flags    Bitmap of possible M_hash_dict_flags_t flags
  * \return Dictionary of key/value pairs, or NULL on failure to parse.
  */
-M_API M_hash_dict_t *M_hash_dict_deserialize(const char *str, char delim, char kv_delim, char quote, char escape, M_uint32 flags);
+M_API M_hash_dict_t *M_hash_dict_deserialize(const char *str, size_t len, char delim, char kv_delim, char quote, char escape, M_uint32 flags);
 
 
 /*! @} */

@@ -1,17 +1,17 @@
 /* The MIT License (MIT)
- * 
+ *
  * Copyright (c) 2017 Monetra Technologies, LLC.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -285,8 +285,12 @@ static M_sql_error_t pgsql_cb_connect(M_sql_driver_conn_t **conn, M_sql_connpool
 	}
 
 	ver = PQserverVersion((*conn)->conn);
-
 	M_snprintf((*conn)->version, sizeof((*conn)->version), "%d.%d.%d", ver / 10000, (ver % 10000) / 100, ver % 100);
+	if (ver < 90500) {
+		err = M_SQL_ERROR_CONN_FAILED;
+		M_snprintf(error, error_size, "Unsupported server version (%s)", (*conn)->version);
+		goto done;
+	}
 
 done:
 	M_hash_dict_destroy(conn_opts);
@@ -328,7 +332,14 @@ static size_t pgsql_num_process_rows(size_t num_rows)
 static char *pgsql_cb_queryformat(M_sql_conn_t *conn, const char *query, size_t num_params, size_t num_rows, char *error, size_t error_size)
 {
 	(void)conn;
-	return M_sql_driver_queryformat(query, M_SQL_DRIVER_QUERYFORMAT_MULITVALUEINSERT_CD|M_SQL_DRIVER_QUERYFORMAT_ENUMPARAM_DOLLAR,
+
+	/* NOTE: PostgreSQL will abort the entire transaction on a conflict, but there are times we explicitly want to take
+	 * action on such a case without rolling back.  This clause will cause it to skip the insert of that record.
+	 * However, this means the result will not return said conflict so we must check to see if the return count is
+	 * expected, and if not, rewrite the code to assume it is a conflict */
+
+
+	return M_sql_driver_queryformat(query, M_SQL_DRIVER_QUERYFORMAT_MULITVALUEINSERT_CD|M_SQL_DRIVER_QUERYFORMAT_ENUMPARAM_DOLLAR|M_SQL_DRIVER_QUERYFORMAT_INSERT_ONCONFLICT_DONOTHING,
 	                                num_params, pgsql_num_process_rows(num_rows),
 	                                error, error_size);
 }
@@ -651,6 +662,7 @@ static M_sql_error_t pgsql_cb_execute(M_sql_conn_t *conn, M_sql_stmt_t *stmt, si
 	M_sql_driver_stmt_t   *dstmt = M_sql_driver_stmt_get_stmt(stmt);
 	char                   psid[32];
 	M_sql_error_t          err;
+	size_t                 affected_rows = 0;
 
 	M_snprintf(psid, sizeof(psid), "ps%zu", dstmt->id);
 
@@ -678,8 +690,10 @@ static M_sql_error_t pgsql_cb_execute(M_sql_conn_t *conn, M_sql_stmt_t *stmt, si
 
 	switch (PQresultStatus(dstmt->res)) {
 		case PGRES_COMMAND_OK:
-			err = M_SQL_ERROR_SUCCESS;
-			M_sql_driver_stmt_result_set_affected_rows(stmt, (size_t)M_str_to_uint32(PQcmdTuples(dstmt->res)));
+			err           = M_SQL_ERROR_SUCCESS;
+			affected_rows = (size_t)M_str_to_uint32(PQcmdTuples(dstmt->res));
+			/* Internally this does a += since this may be split up into multiple inserts */
+			M_sql_driver_stmt_result_set_affected_rows(stmt, affected_rows);
 
 			/* Rewrite to M_SQL_ERROR_SUCCESS_ROW if there were columns defined in the result set */
 			if (PQnfields(dstmt->res)) {
@@ -710,6 +724,15 @@ static M_sql_error_t pgsql_cb_execute(M_sql_conn_t *conn, M_sql_stmt_t *stmt, si
 	/* Get number of rows that are processed at once, supports
 	 * comma-delimited values for inserting multiple rows. */
 	*rows_executed = pgsql_num_process_rows(M_sql_driver_stmt_bind_rows(stmt));
+
+	/* Special case for using INSERT ... ON CONFLICT DO NOTHING, if affected rows doesn't
+	 * match executed rows, there must have been a conflict, modify the error code */
+	if (err == M_SQL_ERROR_SUCCESS &&
+	    M_str_caseeq_max(M_sql_driver_stmt_get_query(stmt), "INSERT", 6) &&
+	    affected_rows != (*rows_executed)) {
+		M_snprintf(error, error_size, "CONFLICT DETECTED ON INSERT");
+		err = M_SQL_ERROR_QUERY_CONSTRAINT;
+	}
 
 	return err;
 }
@@ -877,7 +900,7 @@ static M_sql_driver_t M_sql_postgresql = {
 	M_SQL_DRIVER_VERSION,         /* Driver/Module subsystem version */
 	"postgresql",                 /* Short name of module */
 	"PostgreSQL driver for mstdlib",  /* Display name of module */
-	"1.0.0",                      /* Internal module version */
+	"1.0.2",                      /* Internal module version */
 
 	pgsql_cb_init,                /* Callback used for module initialization. */
 	pgsql_cb_destroy,             /* Callback used for module destruction/unloading. */

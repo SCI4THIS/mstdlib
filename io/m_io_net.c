@@ -503,8 +503,12 @@ static M_bool M_io_net_process_cb(M_io_layer_t *layer, M_event_type_t *type)
 	/* If we are disconnected already, we should pass thru DISCONNECT or ERROR events and drop
 	 * any others (DISCONNECT and ERROR events might otherwise not have yet been delivered) */
 	if (handle->state == M_IO_NET_STATE_DISCONNECTED || handle->state == M_IO_NET_STATE_ERROR) {
-		if (*type == M_EVENT_TYPE_DISCONNECTED || *type == M_EVENT_TYPE_ERROR)
+		/* Remove any registered event from the OS if necessary */
+		M_event_handle_modify(event, M_EVENT_MODTYPE_DEL_WAITTYPE, comm, handle->data.net.evhandle, handle->data.net.sock, M_EVENT_WAIT_READ, 0);
+		M_event_handle_modify(event, M_EVENT_MODTYPE_DEL_WAITTYPE, comm, handle->data.net.evhandle, handle->data.net.sock, M_EVENT_WAIT_WRITE, 0);
+		if (*type == M_EVENT_TYPE_DISCONNECTED || *type == M_EVENT_TYPE_ERROR) {
 			return M_FALSE;
+		}
 		return M_TRUE;
 	}
 
@@ -686,6 +690,7 @@ static void M_io_net_destroy_cb(M_io_layer_t *layer)
 	/* reset_cb() ensures handle is closed */
 
 	M_free(handle->host);
+	M_free(handle->server_ipaddr);
 	M_free(handle);
 }
 
@@ -1202,9 +1207,10 @@ static M_io_error_t M_io_net_accept_cb(M_io_t *comm, M_io_layer_t *orig_layer)
 #else
 	struct sockaddr_in      sockaddr;
 #endif
-	struct sockaddr        *sockaddr_ptr  = (struct sockaddr *)&sockaddr;
-	socklen_t               sockaddr_size = sizeof(sockaddr);
-	char                    addr[64]      = { 0 };
+	struct sockaddr        *sockaddr_ptr    = (struct sockaddr *)&sockaddr;
+	socklen_t               sockaddr_size   = sizeof(sockaddr);
+	char                    addr[64]        = { 0 };
+	char                    server_addr[64] = { 0 };
 
 	M_mem_set(sockaddr_ptr, 0, (size_t)sockaddr_size);
 
@@ -1237,16 +1243,38 @@ static M_io_error_t M_io_net_accept_cb(M_io_t *comm, M_io_layer_t *orig_layer)
 
 	if (sockaddr_ptr->sa_family == AF_INET) {
 		struct sockaddr_in *sockaddr_in = (struct sockaddr_in *)((void *)sockaddr_ptr);
+		struct sockaddr_in  server_in;
+		socklen_t           len         = sizeof(server_in);
+
+		M_mem_set(&server_in, 0, len);
+		getsockname(handle->data.net.sock, (struct sockaddr *)&server_in, &len);
+		M_dns_ntop(AF_INET, &server_in.sin_addr, server_addr, sizeof(server_addr));
+
 		M_dns_ntop(AF_INET, &sockaddr_in->sin_addr, addr, sizeof(addr));
 		handle->data.net.eport = sockaddr_in->sin_port;
 		handle->type           = M_IO_NET_IPV4;
 #ifdef AF_INET6
 	} else if (sockaddr_ptr->sa_family == AF_INET6) {
 		struct sockaddr_in6 *sockaddr_in6 = (struct sockaddr_in6 *)((void *)sockaddr_ptr);
+		struct sockaddr_in6  server_in;
+		socklen_t            len         = sizeof(server_in);
+
+		M_mem_set(&server_in, 0, len);
+		getsockname(handle->data.net.sock, (struct sockaddr *)&server_in, &len);
+		M_dns_ntop(AF_INET6, &server_in.sin6_addr, server_addr, sizeof(server_addr));
+
 		M_dns_ntop(AF_INET6, &sockaddr_in6->sin6_addr, addr, sizeof(addr));
 		handle->data.net.eport = sockaddr_in6->sin6_port;
 		handle->type           = M_IO_NET_IPV6;
 #endif
+	}
+	if (!M_str_isempty(server_addr)) {
+		if (handle->type == M_IO_NET_IPV6 && M_str_caseeq_max(addr, "::ffff:", 7)) {
+			/* Rewrite an IPv4 connection coming in on an IPv6 listener as if it was IPv4 */
+			handle->server_ipaddr = M_strdup(server_addr + 7);
+		} else {
+			handle->server_ipaddr = M_strdup(server_addr);
+		}
 	}
 	if (!M_str_isempty(addr)) {
 		if (handle->type == M_IO_NET_IPV6 && M_str_caseeq_max(addr, "::ffff:", 7)) {
@@ -1481,6 +1509,21 @@ M_bool M_io_net_set_connect_timeout_ms(M_io_t *io, M_uint64 timeout_ms)
 	return M_TRUE;
 }
 
+M_uint64 M_io_net_get_connect_timeout_ms(M_io_t *io)
+{
+	M_io_layer_t  *layer  = M_io_layer_acquire(io, 0, "NET");
+	M_io_handle_t *handle = M_io_layer_get_handle(layer);
+	M_uint64       ret;
+
+	if (layer == NULL || handle == NULL)
+		return 0;
+
+	ret = handle->settings.connect_timeout_ms;
+
+	M_io_layer_release(layer);
+	return ret;
+}
+
 const char *M_io_net_get_host(M_io_t *io)
 {
 	M_io_layer_t  *layer  = M_io_layer_acquire(io, 0, "NET");
@@ -1512,6 +1555,22 @@ const char *M_io_net_get_ipaddr(M_io_t *io)
 	} else {
 		ret = handle->host;
 	}
+
+	M_io_layer_release(layer);
+	return ret;
+}
+
+
+const char *M_io_net_get_server_ipaddr(M_io_t *io)
+{
+	M_io_layer_t  *layer  = M_io_layer_acquire(io, 0, "NET");
+	M_io_handle_t *handle = M_io_layer_get_handle(layer);
+	const char    *ret    = NULL;
+
+	if (layer == NULL || handle == NULL)
+		return NULL;
+
+	ret = handle->server_ipaddr;
 
 	M_io_layer_release(layer);
 	return ret;
