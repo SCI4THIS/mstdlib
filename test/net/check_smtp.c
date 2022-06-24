@@ -634,6 +634,10 @@ static M_uint64 processing_halted_cb(M_bool no_endpoints, void *thunk)
 		return 0;
 	}
 
+	if (args->test_id == STATUS) {
+		M_event_done(args->el);
+	}
+
 	if (args->test_id == PROC_NOT_FOUND) {
 		args->is_success = no_endpoints;
 		M_event_done(args->el);
@@ -698,9 +702,6 @@ static void sent_cb(const M_hash_dict_t *headers, void *thunk)
 		if (args->sent_cb_call_count == 1) {
 			M_net_smtp_pause(args->sp);
 			args->is_success = (M_net_smtp_status(args->sp) == M_NET_SMTP_STATUS_STOPPING);
-		}
-		if (args->sent_cb_call_count == 2) {
-			M_event_done(args->el);
 		}
 	}
 }
