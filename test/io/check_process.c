@@ -9,13 +9,15 @@
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 typedef enum {
-	TEST_CASE_ECHO      = 0,
-	TEST_CASE_TIMEOUT   = 1,
-	TEST_CASE_CAT       = 2,
-	TEST_CASE_CAT_DELAY = 3,
+	TEST_CASE_ECHO       = 0,
+	TEST_CASE_TIMEOUT    = 1,
+	TEST_CASE_CAT        = 2,
+	TEST_CASE_CAT_DELAY  = 3,
+	TEST_CASE_ERROR_EXIT = 4,
 } process_test_cases_t;
 
-static const char * const process_test_names[] = { "echo", "timeout", "cat", "cat_delay" };
+static const char * const process_test_names[] = { "echo", "timeout", "cat", "cat_delay", "error_exit" };
+static const char * argv0;
 
 typedef struct {
 	process_test_cases_t test;
@@ -24,6 +26,8 @@ typedef struct {
 	M_io_t              *io_stderr;
 	M_io_t              *io_proc;
 	M_event_timer_t     *timer;
+	int                  return_code;
+	M_io_error_t         io_error;
 } process_state_t;
 
 static const char *process_name(process_test_cases_t test)
@@ -164,6 +168,7 @@ static void process_cb(M_event_t *event, M_event_type_t type, M_io_t *io, void *
 				int return_code = 0;
 				M_io_process_get_result_code(io, &return_code);
 				event_debug("process %p %s %s ended with return code (%d), cleaning up: %s", io, process_name(state->test), process_io_name(state, io), return_code, error);
+				state->io_error = M_io_get_error(state->io_proc);
 				M_io_destroy(io);
 
 				/* Forcibly close stdin.  On Linux we're automatically notified of closure on process exit, but not necessarily
@@ -174,6 +179,8 @@ static void process_cb(M_event_t *event, M_event_type_t type, M_io_t *io, void *
 
 				/* Error if process didn't return 0 */
 				if (state->test != TEST_CASE_TIMEOUT && return_code != 0) {
+					state->return_code = return_code;
+					event_debug("M_io_error_string: %s\n", M_io_error_string(state->io_error));
 					M_event_return(event);
 				}
 				break;
@@ -223,12 +230,31 @@ static void process_trace_cb(void *cb_arg, M_io_trace_type_t type, M_event_type_
 
 static M_bool process_test(process_test_cases_t test_case)
 {
-	M_event_t         *event   = M_event_create(M_EVENT_FLAG_EXITONEMPTY);
+	M_event_t         *event        = M_event_create(M_EVENT_FLAG_EXITONEMPTY);
 	const char        *command;
-	M_list_str_t      *args    = M_list_str_create(M_LIST_STR_NONE);
+	M_list_str_t      *args         = M_list_str_create(M_LIST_STR_NONE);
 	process_state_t    state;
+	char              *sendmail_emu = NULL;
+	char              *dirname      = NULL;
+	size_t             len;
 
 	switch (test_case) {
+		case TEST_CASE_ERROR_EXIT:
+			dirname = M_fs_path_dirname(argv0, M_FS_SYSTEM_AUTO);
+#ifdef _WIN32
+			len = M_str_len(dirname) + M_str_len("\\sendmail_emu.exe");
+			sendmail_emu = M_malloc_zero(len + 1);
+			M_snprintf(sendmail_emu, len + 1, "%s\\sendmail_emu.exe", dirname);
+#else
+			len = M_str_len(dirname) + M_str_len("/sendmail_emu");
+			sendmail_emu = M_malloc_zero(len + 1);
+			M_snprintf(sendmail_emu, len + 1, "%s/sendmail_emu", dirname);
+#endif
+			M_free(dirname);
+			command = sendmail_emu;
+			M_list_str_insert(args, "-x");
+			M_list_str_insert(args, "15");
+			break;
 		case TEST_CASE_CAT:
 		case TEST_CASE_CAT_DELAY:
 #ifdef _WIN32
@@ -272,6 +298,7 @@ static M_bool process_test(process_test_cases_t test_case)
 		return M_FALSE;
 	}
 	M_list_str_destroy(args);
+	M_free(sendmail_emu);
 
 	M_io_add_trace(state.io_proc,   NULL, process_trace_cb, (void *)"process", NULL, NULL);
 	M_io_add_trace(state.io_stdin,  NULL, process_trace_cb, (void *)"stdin",   NULL, NULL);
@@ -306,6 +333,11 @@ static M_bool process_test(process_test_cases_t test_case)
 	}
 	event_debug("loop ended");
 
+	if (state.test == TEST_CASE_ERROR_EXIT) {
+		if (state.io_error == M_IO_ERROR_TIMEDOUT || state.return_code != 15)
+			return M_FALSE;
+	}
+
 	/* Cleanup */
 	M_event_destroy(event);
 	M_library_cleanup();
@@ -339,6 +371,12 @@ START_TEST(check_process_cat_delay)
 }
 END_TEST
 
+START_TEST(check_process_error_exit)
+{
+	ck_assert(process_test(TEST_CASE_ERROR_EXIT));
+}
+END_TEST
+
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
@@ -354,6 +392,7 @@ static Suite *process_suite(void)
 	tcase_add_test(tc, check_process_timeout);
 	tcase_add_test(tc, check_process_cat);
 	tcase_add_test(tc, check_process_cat_delay);
+	tcase_add_test(tc, check_process_error_exit);
 	suite_add_tcase(suite, tc);
 
 
@@ -365,8 +404,9 @@ int main(int argc, char **argv)
 	SRunner *sr;
 	int      nf;
 
+	argv0 = argv[0];
 	(void)argc;
-	(void)argv;
+
 
 	sr = srunner_create(process_suite());
 	if (getenv("CK_LOG_FILE_NAME")==NULL) srunner_set_log(sr, "check_process.log");
