@@ -193,7 +193,7 @@ typedef enum {
 
 /*! */
 typedef struct {
-	M_uint32       id;       /*!< Stream id */
+	M_int32       id;        /*!< Stream id */
 	M_parser_t    *data;     /*!< Full content of data stream */
 	M_hash_dict_t *request;  /*!< Request headers */
 	M_hash_dict_t *response; /*!< Response headers */
@@ -224,7 +224,7 @@ M_API void M_http2_destroy(M_http2_t *ht);
  *
  * \return newly created http2 object
  */
-M_API M_uint32 M_http2_client_request(M_http2_t *ht, M_http2_request_t reqtype, const char *path);
+M_API M_int32 M_http2_client_request(M_http2_t *ht, M_http2_request_t reqtype, const char *path);
 
 /*! Change handling of PUSH_PROMISE frames
  *

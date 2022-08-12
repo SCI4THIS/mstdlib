@@ -27,6 +27,8 @@ set(sources
 	smtp/m_net_smtp_session.c
 	smtp/m_net_smtp_queue.c
 	http2/m_http2.c
+	http2/m_http2_nghttp2.c
+	http2/m_http2_layer.c
 )
 
 set_source_files_properties(m_net_http_simple.c PROPERTIES COMPILE_DEFINITIONS NET_HTTP_VERSION="${MSTDLIB_VERSION_STRING}")
