@@ -6,6 +6,8 @@ project(mstdlib_net
 )
 set(PROJECT_SOVERSION ${MSTDLIB_SOVERSION_STRING})
 
+find_package(NGHTTP2 REQUIRED)
+
 include(InstallDepLibs) # Provides copy_deplibs() and install_deplibs()
 
 find_package(OpenSSL REQUIRED)
@@ -24,6 +26,7 @@ set(sources
 	smtp/m_net_smtp_endpoint.c
 	smtp/m_net_smtp_session.c
 	smtp/m_net_smtp_queue.c
+	http2/m_http2.c
 )
 
 set_source_files_properties(m_net_http_simple.c PROPERTIES COMPILE_DEFINITIONS NET_HTTP_VERSION="${MSTDLIB_VERSION_STRING}")
@@ -47,6 +50,7 @@ endif ()
 target_include_directories(${PROJECT_NAME}
 	PUBLIC  "$<INSTALL_INTERFACE:${MSTDLIB_INSTALL_LOCATION_HEADERS}>"
 	        "$<BUILD_INTERFACE:${MSTDLIB_TOPLEVEL_DIR}/include>"
+	        "${NGHTTP2_INCLUDE_DIR}"
 	PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
@@ -55,7 +59,8 @@ target_link_libraries(${PROJECT_NAME}
 	PUBLIC  Mstdlib::formats
 	        Mstdlib::io
 	        Mstdlib::tls
-	PRIVATE OpenSSL::Crypto Mstdlib::config
+	PRIVATE OpenSSL::Crypto
+	        Mstdlib::config
 )
 
 # Link extra system libraries.
@@ -69,6 +74,7 @@ if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	find_library(SECURITY NAMES Security)
 	target_link_libraries(${PROJECT_NAME}
 		PRIVATE "${SECURITY}"
+		        "${NGHTTP2_LIBRARY}"
 	)
 endif ()
 
