@@ -1,6 +1,8 @@
 #include <mstdlib/mstdlib.h>
 #include <mstdlib/formats/m_http2.h>
 
+static const char M_http2_pri_str[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
 typedef struct {
 	size_t               len;
 	M_http2_frame_type_t type;
@@ -31,7 +33,6 @@ static void M_http2_frame_header_read(const char *data, size_t data_len, M_http2
 	} else {
 		frame_header->is_R_set = M_FALSE;
 	}
-
 }
 
 static void M_http2_frame_header_write(M_buf_t *buf, M_http2_frame_header_t *frame_header)
@@ -197,3 +198,15 @@ M_bool M_http2_frame_read_settings(const char *data, size_t data_len, M_uint32 *
 	return M_TRUE;
 }
 
+M_bool M_http2_read_pri_str(const char *data, size_t data_len)
+{
+	static size_t len = sizeof(M_http2_pri_str) - 1;
+	if (data_len < len)
+		return M_FALSE;
+	return M_mem_eq(data, M_http2_pri_str, len);
+}
+
+void M_http2_write_pri_str(M_buf_t *buf)
+{
+	M_buf_add_str(buf, M_http2_pri_str);
+}

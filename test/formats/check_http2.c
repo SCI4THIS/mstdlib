@@ -15,6 +15,14 @@ do {\
 	suite_add_tcase(SUITENAME, tc);\
 } while (0)
 
+START_TEST(check_http2_pri_str)
+{
+	M_buf_t *buf = M_buf_create();
+	M_http2_write_pri_str(buf);
+	ck_assert_msg(M_http2_read_pri_str(M_buf_peek(buf), M_buf_len(buf)), "Should succeed");
+	M_buf_cancel(buf);
+}
+
 START_TEST(check_http2_frame_settings)
 {
 	M_http2_settings_t  settings;
@@ -55,6 +63,7 @@ int main(void)
 	suite = suite_create("http2");
 
 	add_test(suite, check_http2_frame_settings);
+	add_test(suite, check_http2_pri_str);
 
 	sr = srunner_create(suite);
 	if (getenv("CK_LOG_FILE_NAME")==NULL) srunner_set_log(sr, "check_http2.log");
