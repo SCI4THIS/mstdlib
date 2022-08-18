@@ -22,7 +22,7 @@ static void M_http2_frame_header_read(const char *data, size_t data_len, M_http2
 	frame_header->flags = (M_uint8)data[4];
 	M_mem_copy(&stream_id_R, &data[5], 4);
 
-	frame_header->len = M_ntoh32(frame_len) >> 8; /* M_ntoh24(frame_len) */
+	frame_header->len = M_ntoh32(frame_len) >> 8; /* M_ntoh24() */
 	frame_header->stream_id = M_ntoh32(stream_id_R);
 
 	if ((data[5] & 0x80) != 0) {
@@ -40,7 +40,7 @@ static void M_http2_frame_header_write(M_buf_t *buf, M_http2_frame_header_t *fra
 	M_uint32 frame_len;
 	M_uint32 stream_id_R;
 
-	frame_len = M_hton32((M_uint32)frame_header->len);
+	frame_len = M_hton32((M_uint32)frame_header->len) >> 8; /* M_hton24() */
 	stream_id_R = M_hton32((M_uint32)frame_header->stream_id);
 	M_mem_copy(&bytes[0], &frame_len, 3);
 	bytes[3] = (M_uint8)frame_header->type;
