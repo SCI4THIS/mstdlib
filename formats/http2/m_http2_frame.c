@@ -72,6 +72,12 @@ static void M_http2_frame_write_setting(M_buf_t *buf, M_uint32 flags, M_http2_se
 	M_buf_add_bytes(buf, bytes, 6);
 }
 
+void M_http2_frame_write_settings_ack(M_buf_t *buf)
+{
+	M_http2_frame_header_t frame_header = { 0, M_HTTP2_FRAME_TYPE_SETTINGS, 0x01, M_FALSE, 0 };
+	M_http2_frame_header_write(buf, &frame_header);
+}
+
 M_bool M_http2_frame_write_settings(M_buf_t *buf, M_uint32 flags, M_http2_settings_t *settings)
 {
 	M_http2_frame_header_t frame_header;
@@ -160,6 +166,9 @@ static void M_http2_frame_read_setting(const char *bytes, M_uint32 *flags, M_htt
 		case M_HTTP2_SETTINGS_NO_RFC7540_PRIORITIES:
 			settings->is_disable_rfc7540_priorities = (M_ntoh32(n_val) != 0);
 			break;
+		case M_HTTP2_SETTINGS_ACK:
+			/* Impossible */
+			break;
 	}
 }
 
@@ -172,6 +181,10 @@ M_bool M_http2_frame_read_settings(const char *data, size_t data_len, M_uint32 *
 		return M_FALSE;
 
 	M_http2_frame_header_read(data, data_len, &frame_header);
+	if (frame_header.flags == 0x01) {
+		*flags = (1u << M_HTTP2_SETTINGS_ACK);
+		return M_TRUE;
+	}
 	if (data_len < (9 + frame_header.len))
 		return M_FALSE;
 
@@ -183,3 +196,4 @@ M_bool M_http2_frame_read_settings(const char *data, size_t data_len, M_uint32 *
 
 	return M_TRUE;
 }
+

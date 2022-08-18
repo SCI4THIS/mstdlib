@@ -34,6 +34,12 @@ START_TEST(check_http2_frame_settings)
 	ck_assert_msg(M_buf_len(buf) == sizeof(frame1), "Should be same size as frame");
 	ck_assert_msg(M_mem_eq(M_buf_peek(buf), frame1, sizeof(frame1)), "Should generate same as frame1");
 
+	M_buf_drop(buf, M_buf_len(buf));
+
+	M_http2_frame_write_settings_ack(buf);
+	ck_assert_msg(M_http2_frame_read_settings(M_buf_peek(buf), M_buf_len(buf), &flags, &settings), "Should succeed");
+	ck_assert_msg(flags == (1u << M_HTTP2_SETTINGS_ACK), "Should set ACK flag");
+
 	M_buf_cancel(buf);
 }
 END_TEST

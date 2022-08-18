@@ -68,6 +68,7 @@ typedef enum {
 	M_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE    = 0x06,
 	M_HTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL = 0x08,
 	M_HTTP2_SETTINGS_NO_RFC7540_PRIORITIES   = 0x09,
+	M_HTTP2_SETTINGS_ACK                     = 31    /*!< signifies SETTINGS frame was an ACK */
 } M_http2_settings_id_t;
 
 typedef struct {
@@ -81,6 +82,7 @@ typedef struct {
 	M_bool is_disable_rfc7540_priorities;
 } M_http2_settings_t;
 
+void   M_http2_frame_write_settings_ack(M_buf_t *buf);
 M_bool M_http2_frame_write_settings(M_buf_t *buf, M_uint32 flags, M_http2_settings_t *settings);
 M_bool M_http2_frame_read_settings(const char *data, size_t data_len, M_uint32 *flags, M_http2_settings_t *settings);
 
