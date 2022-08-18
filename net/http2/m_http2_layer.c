@@ -73,6 +73,8 @@ static M_bool http2_process_write(M_io_handle_t *handle, M_io_layer_t *layer)
 {
 	M_io_error_t ioerr;
 	size_t       nbytes;
+
+	M_printf("M_buf_len(%p): %zu\n", handle->ht->out_buf, M_buf_len(handle->ht->out_buf));
 	if (M_buf_len(handle->ht->out_buf) == 0)
 		return M_FALSE; /* We don't have anything to write, maybe next layer does */
 
@@ -140,7 +142,11 @@ static M_bool http2_disconnect_cb(M_io_layer_t *layer)
 	M_printf("%s:%d: %s()\n", __FILE__, __LINE__, __FUNCTION__);
 	M_printf("session_terminate GO_AWAY\n");
 	nghttp2_session_terminate_session(ht->ng->session, NGHTTP2_NO_ERROR);
-	handle->state = HTTP2_STATE_DISCONNECTING;
+	M_http2_nghttp2_mem_send(ht);
+	if (M_buf_len(ht->out_buf) > 0) {
+		M_io_layer_softevent_add(layer, M_FALSE, M_EVENT_TYPE_WRITE, M_IO_ERROR_SUCCESS);
+	}
+	//handle->state = HTTP2_STATE_DISCONNECTING;
 	return M_FALSE;
 }
 

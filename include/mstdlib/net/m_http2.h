@@ -28,7 +28,7 @@
 
 __BEGIN_DECLS
 
-/*! \addtogroup m_http2 HTTP2
+/*! \addtogroup m_net_http2 HTTP2
  *  \ingroup m_net
  *
  * HTTP/2 message reading and writing.

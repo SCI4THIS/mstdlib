@@ -57,14 +57,9 @@ static int ng_on_frame_recv_callback(nghttp2_session *session, const nghttp2_fra
 	M_printf("ng_on_frame_recv_callback(%p,%p,%p): type=%s, stream_id=%d\n", session, frame, thunk, ng_frame_type_str(frame->hd.type), frame->hd.stream_id);
 	if (frame->hd.type == NGHTTP2_PUSH_PROMISE) {
 		M_int32 id = frame->push_promise.promised_stream_id;
-		switch (ht->push_promise_mode) {
-			case M_HTTP2_PUSH_PROMISE_MODE_IGNORE:
-				M_printf("RST_STREAM PUSH_PROMISE (promised: %d)\n", id);
-				nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, id, NGHTTP2_NO_ERROR);
-				break;
-			case M_HTTP2_PUSH_PROMISE_MODE_KEEP:
-				M_hash_u64vp_insert(ht->streams, (M_uint64)id, M_http2_stream_create(id, NULL));
-				break;
+		if (ht->push_promise_mode == M_HTTP2_PUSH_PROMISE_MODE_IGNORE) {
+			M_printf("RST_STREAM PUSH_PROMISE (promised: %d)\n", id);
+			nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, id, NGHTTP2_NO_ERROR);
 		}
 	}
 	return 0;
@@ -147,9 +142,17 @@ static int ng_on_stream_close_callback(nghttp2_session *session, int32_t stream_
 }
 
 static int ng_on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame,
-		void *user_data)
+		void *thunk)
 {
-	M_printf("ng_on_begin_headers_callback(%p,%p,%p) type=%s\n", session, frame, user_data, ng_frame_type_str(frame->hd.type));
+	M_http2_t *ht = thunk;
+	if (frame->hd.type == NGHTTP2_PUSH_PROMISE) {
+		M_int32 id = frame->push_promise.promised_stream_id;
+		if (ht->push_promise_mode == M_HTTP2_PUSH_PROMISE_MODE_KEEP) {
+			M_printf("Created stream for promised id: %d\n", id);
+			M_hash_u64vp_insert(ht->streams, (M_uint64)id, M_http2_stream_create(id, NULL));
+		}
+	}
+	M_printf("ng_on_begin_headers_callback(%p,%p,%p) type=%s\n", session, frame, thunk, ng_frame_type_str(frame->hd.type));
 	return 0;
 }
 
@@ -397,7 +400,8 @@ M_http2_nghttp2_t *M_http2_nghttp2_create(M_http2_t *ht)
 	int                        rc;
 	M_http2_nghttp2_t         *ng     = NULL;
 	nghttp2_settings_entry     iv[]   = {
-		{ NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 100 },
+		{ NGHTTP2_SETTINGS_ENABLE_PUSH, 0 },
+		{ NGHTTP2_SETTINGS_HEADER_TABLE_SIZE, 0 },
 	};
 	nghttp2_mem                ng_mem = {
 		NULL /* thunk */,
