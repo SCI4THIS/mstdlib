@@ -15,6 +15,20 @@ do {\
 	suite_add_tcase(SUITENAME, tc);\
 } while (0)
 
+START_TEST(check_http2_huffman)
+{
+	char          *str           = NULL;
+	const M_uint8  huffman_str[] = {
+		0xaa, 0x69, 0xd2, 0x9a, 0xc4, 0xb9, 0xec, 0x9b
+	};
+	M_buf_t *buf = M_buf_create();
+	ck_assert_msg(M_http2_huffman_decode(buf, huffman_str, sizeof(huffman_str)), "Should succeed");
+	str = M_buf_finish_str(buf, NULL);
+	ck_assert_msg(M_str_eq(str, "nghttp2.org"), "Should huffman decode to \"nghttp2.org\"");
+	M_free(str);
+}
+END_TEST
+
 START_TEST(check_http2_pri_str)
 {
 	M_buf_t *buf = M_buf_create();
@@ -22,6 +36,7 @@ START_TEST(check_http2_pri_str)
 	ck_assert_msg(M_http2_read_pri_str(M_buf_peek(buf), M_buf_len(buf)), "Should succeed");
 	M_buf_cancel(buf);
 }
+END_TEST
 
 START_TEST(check_http2_frame_settings)
 {
@@ -64,6 +79,7 @@ int main(void)
 
 	add_test(suite, check_http2_frame_settings);
 	add_test(suite, check_http2_pri_str);
+	add_test(suite, check_http2_huffman);
 
 	sr = srunner_create(suite);
 	if (getenv("CK_LOG_FILE_NAME")==NULL) srunner_set_log(sr, "check_http2.log");

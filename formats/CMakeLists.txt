@@ -35,6 +35,7 @@ set(sources
 
 	# http2:
 	http2/m_http2_frame.c
+	http2/m_http2_huffman.c
 
 	# http:
 	http/m_http.c
