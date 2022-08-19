@@ -69,9 +69,12 @@ M_bool M_http2_huffman_encode(M_buf_t *buf, const M_uint8 *data, size_t data_len
 		M_uint32 charcode = M_http2_huffman_encode_table[byte].code;
 		encode_byte       = M_http2_huffman_encode_character(buf, encode_byte, &encode_pos, len, charcode);
 	}
-	for (encode_pos++; encode_pos-->0;) {
-		encode_byte |= (1 << encode_pos);
+	if (encode_pos < 7) {
+		/* Pack the end with 1's to avoid accidental output */
+		for (encode_pos++; encode_pos-->0;) {
+			encode_byte |= (1 << encode_pos);
+		}
+		M_buf_add_byte(buf, encode_byte);
 	}
-	M_buf_add_byte(buf, encode_byte);
 	return M_TRUE;
 }
