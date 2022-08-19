@@ -18,13 +18,37 @@ do {\
 START_TEST(check_http2_huffman)
 {
 	char          *str           = NULL;
+	size_t         str_len;
 	const M_uint8  huffman_str[] = {
 		0xaa, 0x69, 0xd2, 0x9a, 0xc4, 0xb9, 0xec, 0x9b
 	};
+	const char    *huffman_str_decoded = "nghttp2.org";
+	const M_uint8  huffman_str2[] = {
+	  0x94, 0xe7, 0x82, 0x1d, 0xd7, 0xf2, 0xe6, 0xc7, 0xb3, 0x35, 0xdf, 0xdf, 0xcd, 0x5b, 0x39, 0x60,
+   0xd5, 0xaf, 0x27, 0x08, 0x7f, 0x36, 0x72, 0xc1, 0xab, 0x27, 0x0f, 0xb5, 0x29, 0x1f, 0x95, 0x87,
+   0x31, 0x60, 0x65, 0xc0, 0x03, 0xed, 0x4e, 0xe5, 0xb1, 0x06, 0x3d, 0x50, 0x07,
+	};
+	const char    *huffman_str2_decoded = "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1";
 	M_buf_t *buf = M_buf_create();
 	ck_assert_msg(M_http2_huffman_decode(buf, huffman_str, sizeof(huffman_str)), "Should succeed");
 	str = M_buf_finish_str(buf, NULL);
-	ck_assert_msg(M_str_eq(str, "nghttp2.org"), "Should huffman decode to \"nghttp2.org\"");
+	ck_assert_msg(M_str_eq(str, huffman_str_decoded), "Should huffman decode to \"%s\" not \"%s\"", huffman_str_decoded, str);
+	buf = M_buf_create();
+	ck_assert_msg(M_http2_huffman_encode(buf, (unsigned char *)str, M_str_len(str)), "Should succeed");
+	M_free(str);
+	str = M_buf_finish_str(buf, &str_len);
+	ck_assert_msg(M_mem_eq(str, huffman_str, sizeof(huffman_str)), "Should huffman encode back");
+	M_free(str);
+
+	buf = M_buf_create();
+	ck_assert_msg(M_http2_huffman_decode(buf, huffman_str2, sizeof(huffman_str2)), "Should succeed");
+	str = M_buf_finish_str(buf, NULL);
+	ck_assert_msg(M_str_eq(str, huffman_str2_decoded), "Should huffman decode to \"%s\" not \"%s\"", huffman_str2_decoded, str);
+	buf = M_buf_create();
+	ck_assert_msg(M_http2_huffman_encode(buf, (unsigned char *)str, M_str_len(str)), "Should succeed");
+	M_free(str);
+	str = M_buf_finish_str(buf, &str_len);
+	ck_assert_msg(M_mem_eq(str, huffman_str2, sizeof(huffman_str2)), "Should huffman encode back");
 	M_free(str);
 }
 END_TEST

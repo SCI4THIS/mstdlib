@@ -1,7 +1,8 @@
 #include <mstdlib/mstdlib.h>
 #include <mstdlib/formats/m_http2.h>
 
-#include "m_http2_huffman_generated.c"
+#include "m_http2_huffman_generated_encode.c"
+#include "m_http2_huffman_generated_decode.c"
 
 static M_http2_huffman_state_t M_http2_huffman_decode_byte(M_buf_t *buf, M_uint8 byte, M_http2_huffman_state_t state)
 {
@@ -40,3 +41,37 @@ M_bool M_http2_huffman_decode(M_buf_t *out_buf, const M_uint8 *data, size_t data
 	return M_TRUE;
 }
 
+static M_uint8 M_http2_huffman_encode_character(M_buf_t *buf, M_uint8 encode_byte, size_t *encode_pos, M_uint8 len, M_uint32 charcode)
+{
+	size_t i;
+	for (i=len; i-->0;) {
+		M_bool bit = (charcode & (1 << i)) != 0;
+		if (bit)
+			encode_byte |= (1 << *encode_pos);
+		if (*encode_pos == 0) {
+			M_buf_add_byte(buf, encode_byte);
+			*encode_pos = 8;
+			encode_byte = 0x00;
+		}
+		(*encode_pos)--;
+	}
+	return encode_byte;
+}
+
+M_bool M_http2_huffman_encode(M_buf_t *buf, const M_uint8 *data, size_t data_len)
+{
+	size_t  i;
+	M_uint8 encode_byte = 0x00;
+	size_t  encode_pos  = 7;
+	for (i=0; i<data_len; i++) {
+		M_uint8  byte     = data[i];
+		M_uint8  len      = M_http2_huffman_encode_table[byte].len;
+		M_uint32 charcode = M_http2_huffman_encode_table[byte].code;
+		encode_byte       = M_http2_huffman_encode_character(buf, encode_byte, &encode_pos, len, charcode);
+	}
+	for (encode_pos++; encode_pos-->0;) {
+		encode_byte |= (1 << encode_pos);
+	}
+	M_buf_add_byte(buf, encode_byte);
+	return M_TRUE;
+}
