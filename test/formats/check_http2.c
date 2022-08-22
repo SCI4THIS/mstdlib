@@ -110,6 +110,20 @@ START_TEST(check_http2_frame_settings)
 }
 END_TEST
 
+/*
+static void print_dict(M_hash_dict_t *dict)
+{
+	M_hash_dict_enum_t *hashenum;
+	const char         *key;
+	const char         *value;
+	M_hash_dict_enumerate(dict, &hashenum);
+	while (M_hash_dict_enumerate_next(dict, hashenum, &key, &value)) {
+		M_printf("\"%s\" = \"%s\"\n", key, value);
+	}
+	M_hash_dict_enumerate_free(hashenum);
+}
+*/
+
 START_TEST(check_http2_frame_headers)
 {
 	const M_uint8 frame[] = {
@@ -131,6 +145,11 @@ START_TEST(check_http2_frame_headers)
 		0x42, 0xc1, 0x1d, 0x07, 0x27, 0x5f, 0x00, 0x90, 0xf2, 0xb1, 0x0f, 0x52, 0x4b, 0x52, 0x56, 0x4f,
 		0xaa, 0xca, 0xb1, 0xeb, 0x49, 0x8f, 0x52, 0x3f, 0x85, 0xa8, 0xe8, 0xa8, 0xd2, 0xcb,
 	};
+	const M_uint8 frame2[] = {
+		0x00, 0x00, 0x0d, 0x01, 0x05, 0x00, 0x00, 0x00, 0x01, 0x82, 0x87, 0x84, 0x41, 0x88, 0xaa, 0x69,
+		0xd2, 0x9a, 0xc4, 0xb9, 0xec, 0x9b,
+	};
+
 	const struct {
 		const char *key;
 		const char *val;
@@ -151,13 +170,31 @@ START_TEST(check_http2_frame_headers)
 		{ "alt-svc", "h3=\":443\"; ma=3600, h3-29=\":443\"; ma=3600" },
 		{ "via", "2 nghttpx" },
 	};
+	const struct {
+		const char *key;
+		const char *val;
+	} keyvals2[] = {
+		{ ":method", "GET" },
+		{ ":scheme", "https" },
+		{ ":path", "/" },
+		{ ":authority", "nghttp2.org" },
+	};
 	const size_t        len      = (sizeof(keyvals) / sizeof(keyvals[0]));
+	const size_t        len2     = (sizeof(keyvals2) / sizeof(keyvals2[0]));
 	size_t              i;
 	M_hash_dict_t      *headers  = M_http2_frame_read_headers(frame, sizeof(frame));
-	ck_assert_msg(M_hash_dict_num_keys(headers) == len, "Should have read %zu header entries, not %u", len, M_hash_dict_size(headers));
+	ck_assert_msg(M_hash_dict_num_keys(headers) == len, "Should have read %zu header entries, not %zu", len, M_hash_dict_num_keys(headers));
 	for (i=0; i<len; i++) {
 		const char *val = M_hash_dict_get_direct(headers, keyvals[i].key);
 		ck_assert_msg(M_str_eq(val, keyvals[i].val), "Should have \"%s\" = \"%s\", not \"%s\"", keyvals[i].key, keyvals[i].val, val);
+	}
+	M_hash_dict_destroy(headers);
+
+	headers = M_http2_frame_read_headers(frame2, sizeof(frame2));
+	ck_assert_msg(M_hash_dict_num_keys(headers) == len2, "Should have read %zu header entries, not %zu", len2, M_hash_dict_num_keys(headers));
+	for (i=0; i<len2; i++) {
+		const char *val = M_hash_dict_get_direct(headers, keyvals2[i].key);
+		ck_assert_msg(M_str_eq(val, keyvals2[i].val), "Should have \"%s\" = \"%s\", not \"%s\"", keyvals2[i].key, keyvals2[i].val, val);
 	}
 	M_hash_dict_destroy(headers);
 }

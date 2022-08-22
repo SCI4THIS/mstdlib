@@ -263,15 +263,17 @@ static size_t M_http2_frame_read_header_string(const M_uint8* data, char **val)
 
 M_hash_dict_t *M_http2_frame_read_headers(const M_uint8 *data, size_t data_len)
 {
-	M_hash_dict_t          *headers          = NULL;
-	M_http2_frame_header_t  frame_header     = { 0 };
-	size_t                  frame_pos        = 9;
-	M_uint8                 pad_length       = 0;
-	const char             *key              = NULL;
-	const char             *value            = NULL;
-	M_uint64                u64              = 0;
-	char                   *key_str          = NULL;
-	char                   *value_str        = NULL;
+	M_hash_dict_t              *headers          = NULL;
+	M_http2_frame_header_t      frame_header     = { 0 };
+	size_t                      frame_pos        = 9;
+	M_uint8                     pad_length       = 0;
+	const char                 *key              = NULL;
+	const char                 *value            = NULL;
+	M_uint64                    u64              = 0;
+	char                       *key_str          = NULL;
+	char                       *value_str        = NULL;
+	M_uint8                     mask;
+	M_http2_header_entry_type_t entry_type;
 
 	if (data_len < 9)
 		return NULL;
@@ -303,7 +305,8 @@ M_hash_dict_t *M_http2_frame_read_headers(const M_uint8 *data, size_t data_len)
 	}
 
 	while (frame_pos + pad_length < frame_header.len) {
-		switch (M_http2_frame_headers_entry_type(data[frame_pos])) {
+		entry_type = M_http2_frame_headers_entry_type(data[frame_pos]);
+		switch (entry_type) {
 			case M_HTTP2_HEADER_ENTRY_TYPE_INDEXED_FIELD:
 				key = M_http2_header_table[data[frame_pos] & 0x7F].key;
 				value = M_http2_header_table[data[frame_pos] & 0x7F].value;
@@ -314,19 +317,32 @@ M_hash_dict_t *M_http2_frame_read_headers(const M_uint8 *data, size_t data_len)
 			frame_pos++;
 				break;
 			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_INDEX_NAME:
-				if (data[frame_pos] == 0x0F) {
+			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_NEVER_INDEX_INDEX_NAME:
+			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_INCREMENTAL_INDEX_INDEX_NAME:
+				if (entry_type == M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_INDEX_NAME) {
+					mask = 0x0F;
+				}
+				if (entry_type == M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_NEVER_INDEX_INDEX_NAME) {
+					mask = 0x0F;
+				}
+				if (entry_type == M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_INCREMENTAL_INDEX_INDEX_NAME) {
+					mask = 0x3F;
+				}
+				if (data[frame_pos] == mask) {
 					frame_pos++;
 					frame_pos += M_http2_frame_read_header_integer(&data[frame_pos], &u64);
-					u64 += 0x0F;
+					u64 += mask;
 					key = M_http2_header_table[u64].key;
 				} else {
-					key = M_http2_header_table[data[frame_pos++]].key;
+					key = M_http2_header_table[data[frame_pos++] & mask].key;
 				}
 				frame_pos += M_http2_frame_read_header_string(&data[frame_pos], &value_str);
 				M_hash_dict_insert(headers, key, value_str);
 				M_free(value_str);
 				break;
+			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_NEVER_INDEX_NEW_NAME:
 			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_NEW_NAME:
+			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_INCREMENTAL_INDEX_NEW_NAME:
 				frame_pos++;
 				frame_pos += M_http2_frame_read_header_string(&data[frame_pos], &key_str);
 				frame_pos += M_http2_frame_read_header_string(&data[frame_pos], &value_str);
@@ -334,9 +350,8 @@ M_hash_dict_t *M_http2_frame_read_headers(const M_uint8 *data, size_t data_len)
 				M_free(key_str);
 				M_free(value_str);
 				break;
-			default:
-				M_printf("Unhandled type! %02x\n", data[frame_pos]);
-				return headers;
+			case M_HTTP2_HEADER_ENTRY_TYPE_ERROR:
+				break;
 		}
 	}
 
