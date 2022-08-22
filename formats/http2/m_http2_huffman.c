@@ -46,12 +46,12 @@ static M_uint8 M_http2_huffman_encode_character(M_buf_t *buf, M_uint8 encode_byt
 	size_t i;
 	for (i=len; i-->0;) {
 		M_bool bit = (charcode & (1 << i)) != 0;
-		if (bit)
-			encode_byte |= (1 << *encode_pos);
+		if (bit == M_FALSE)
+			encode_byte &= ~(1u << *encode_pos);
 		if (*encode_pos == 0) {
 			M_buf_add_byte(buf, encode_byte);
 			*encode_pos = 8;
-			encode_byte = 0x00;
+			encode_byte = 0xFF;
 		}
 		(*encode_pos)--;
 	}
@@ -61,7 +61,7 @@ static M_uint8 M_http2_huffman_encode_character(M_buf_t *buf, M_uint8 encode_byt
 M_bool M_http2_huffman_encode(M_buf_t *buf, const M_uint8 *data, size_t data_len)
 {
 	size_t  i;
-	M_uint8 encode_byte = 0x00;
+	M_uint8 encode_byte = 0xFF;
 	size_t  encode_pos  = 7;
 	for (i=0; i<data_len; i++) {
 		M_uint8  byte     = data[i];
@@ -70,10 +70,7 @@ M_bool M_http2_huffman_encode(M_buf_t *buf, const M_uint8 *data, size_t data_len
 		encode_byte       = M_http2_huffman_encode_character(buf, encode_byte, &encode_pos, len, charcode);
 	}
 	if (encode_pos < 7) {
-		/* Pack the end with 1's to avoid accidental output */
-		for (encode_pos++; encode_pos-->0;) {
-			encode_byte |= (1 << encode_pos);
-		}
+		/* Add partial encoded byte to final output */
 		M_buf_add_byte(buf, encode_byte);
 	}
 	return M_TRUE;
