@@ -11,7 +11,7 @@ typedef struct {
 	M_uint32             stream_id;
 } M_http2_frame_header_t;
 
-static void M_http2_frame_header_read(const char *data, size_t data_len, M_http2_frame_header_t *frame_header)
+static void M_http2_frame_header_read(const M_uint8 *data, size_t data_len, M_http2_frame_header_t *frame_header)
 {
 	M_uint32 frame_len  = 0;
 	M_uint32 stream_id_R;
@@ -129,7 +129,7 @@ M_bool M_http2_frame_write_settings(M_buf_t *buf, M_uint32 flags, M_http2_settin
 	return M_TRUE;
 }
 
-static void M_http2_frame_read_setting(const char *bytes, M_uint32 *flags, M_http2_settings_t *settings)
+static void M_http2_frame_read_setting(const M_uint8 *bytes, M_uint32 *flags, M_http2_settings_t *settings)
 {
 	M_http2_settings_id_t setting_id;
 	M_uint16              n_id;
@@ -173,7 +173,177 @@ static void M_http2_frame_read_setting(const char *bytes, M_uint32 *flags, M_htt
 	}
 }
 
-M_bool M_http2_frame_read_settings(const char *data, size_t data_len, M_uint32 *flags, M_http2_settings_t *settings)
+typedef enum {
+	M_HTTP2_HEADER_FRAME_FLAG_END_STREAM  = 0x01,
+	M_HTTP2_HEADER_FRAME_FLAG_END_HEADERS = 0x04,
+	M_HTTP2_HEADER_FRAME_FLAG_PADDED      = 0x08,
+	M_HTTP2_HEADER_FRAME_FLAG_PRIORITY    = 0x20,
+} M_http2_header_frame_flag_t;
+
+#include "m_http2_static_header_table.c"
+/* m_http2_static_header_table.c initializes the following struct:
+	* static struct {
+	* 	const char *key;
+	* 	const char *value;
+ * } M_http2_header_table[];
+ */
+
+typedef enum {
+	M_HTTP2_HEADER_ENTRY_TYPE_DYNAMIC_TABLE_SIZE_UPDATE,
+	M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_NEVER_INDEX_NEW_NAME,
+	M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_NEVER_INDEX_INDEX_NAME,
+	M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_NEW_NAME,
+	M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_INDEX_NAME,
+	M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_INCREMENTAL_INDEX_NEW_NAME,
+	M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_INCREMENTAL_INDEX_INDEX_NAME,
+	M_HTTP2_HEADER_ENTRY_TYPE_INDEXED_FIELD,
+	M_HTTP2_HEADER_ENTRY_TYPE_ERROR,
+} M_http2_header_entry_type_t;
+
+static M_http2_header_entry_type_t M_http2_frame_headers_entry_type(M_uint8 byte)
+{
+	/* See RFC7541 section 6.3 for more information */
+	if ((byte & 0xE0) == 0x20)
+		return M_HTTP2_HEADER_ENTRY_TYPE_DYNAMIC_TABLE_SIZE_UPDATE;
+	if (byte == 0x10)
+		return M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_NEVER_INDEX_NEW_NAME;
+	if ((byte & 0xF0) == 0x10)
+		return M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_NEVER_INDEX_INDEX_NAME;
+	if (byte == 0x00)
+		return M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_NEW_NAME;
+	if ((byte & 0xF0) == 0x00)
+		return M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_INDEX_NAME;
+	if (byte == 0x40)
+		return M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_INCREMENTAL_INDEX_NEW_NAME;
+	if ((byte & 0xC0) == 0x40)
+		return M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_INCREMENTAL_INDEX_INDEX_NAME;
+	if ((byte & 0x80) == 0x80)
+		return M_HTTP2_HEADER_ENTRY_TYPE_INDEXED_FIELD;
+
+	return M_HTTP2_HEADER_ENTRY_TYPE_ERROR;
+}
+
+
+static size_t M_http2_frame_read_header_integer(const M_uint8 *data, M_uint64* val)
+{
+	size_t  pos = 0;
+	M_uint8 byte;
+	*val = 0;
+	do {
+		byte = data[pos++];
+		*val = (*val * 0x80) + (byte & 0x7F);
+	} while ((byte & 0x80) != 0);
+	return pos;
+}
+
+static size_t M_http2_frame_read_header_string(const M_uint8* data, char **val)
+{
+	size_t pos                = 0;
+	M_bool is_huffman_encoded = (data[pos] & 0x80) != 0;
+	size_t len                = data[pos++] & 0x7F;
+
+	if (len == 0x7F) {
+		M_uint64 u64;
+		pos += M_http2_frame_read_header_integer(&data[pos], &u64);
+		len = u64 + 0x7F;
+	}
+
+	if (is_huffman_encoded) {
+		M_buf_t *buf = M_buf_create();
+		M_http2_huffman_decode(buf, &data[pos], len);
+		*val = M_buf_finish_str(buf, NULL);
+		return pos + len; /* data_len to advance, not the strlen */
+	}
+
+	*val = M_malloc(len + 1);
+	M_mem_copy(*val, &data[pos], len);
+	(*val)[len] = '\0';
+	return pos + len;
+}
+
+M_hash_dict_t *M_http2_frame_read_headers(const M_uint8 *data, size_t data_len)
+{
+	M_hash_dict_t          *headers          = NULL;
+	M_http2_frame_header_t  frame_header     = { 0 };
+	size_t                  frame_pos        = 9;
+	M_uint8                 pad_length       = 0;
+	const char             *key              = NULL;
+	const char             *value            = NULL;
+	M_uint64                u64              = 0;
+	char                   *key_str          = NULL;
+	char                   *value_str        = NULL;
+
+	if (data_len < 9)
+		return NULL;
+
+	M_http2_frame_header_read(data, data_len, &frame_header);
+
+	if (data_len < (9 + frame_header.len))
+		return NULL;
+
+	headers = M_hash_dict_create(32, 75, M_HASH_DICT_NONE);
+
+	if (frame_header.flags & M_HTTP2_HEADER_FRAME_FLAG_PADDED) {
+		pad_length = data[frame_pos++];
+	}
+
+	if (frame_header.flags & M_HTTP2_HEADER_FRAME_FLAG_PRIORITY) {
+		struct {
+			M_bool   exclusive;
+			M_uint32 stream_dependency_id;
+			M_uint8  weight;
+		} priority = { 0 };
+		M_uint32 stream_id;
+		priority.exclusive = (data[frame_pos++] & 0x80) != 0;
+		M_mem_copy(&stream_id, &data[frame_pos], sizeof(stream_id));
+		priority.stream_dependency_id = M_hton32(stream_id);
+		priority.stream_dependency_id &= 0x7FFFFFFF;
+		frame_pos += 4;
+		priority.weight = data[frame_pos++];
+	}
+
+	while (frame_pos + pad_length < frame_header.len) {
+		switch (M_http2_frame_headers_entry_type(data[frame_pos])) {
+			case M_HTTP2_HEADER_ENTRY_TYPE_INDEXED_FIELD:
+				key = M_http2_header_table[data[frame_pos] & 0x7F].key;
+				value = M_http2_header_table[data[frame_pos] & 0x7F].value;
+				M_hash_dict_insert(headers, key, value);
+				frame_pos++;
+				break;
+			case M_HTTP2_HEADER_ENTRY_TYPE_DYNAMIC_TABLE_SIZE_UPDATE:
+			frame_pos++;
+				break;
+			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_INDEX_NAME:
+				if (data[frame_pos] == 0x0F) {
+					frame_pos++;
+					frame_pos += M_http2_frame_read_header_integer(&data[frame_pos], &u64);
+					u64 += 0x0F;
+					key = M_http2_header_table[u64].key;
+				} else {
+					key = M_http2_header_table[data[frame_pos++]].key;
+				}
+				frame_pos += M_http2_frame_read_header_string(&data[frame_pos], &value_str);
+				M_hash_dict_insert(headers, key, value_str);
+				M_free(value_str);
+				break;
+			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_NEW_NAME:
+				frame_pos++;
+				frame_pos += M_http2_frame_read_header_string(&data[frame_pos], &key_str);
+				frame_pos += M_http2_frame_read_header_string(&data[frame_pos], &value_str);
+				M_hash_dict_insert(headers, key_str, value_str);
+				M_free(key_str);
+				M_free(value_str);
+				break;
+			default:
+				M_printf("Unhandled type! %02x\n", data[frame_pos]);
+				return headers;
+		}
+	}
+
+	return headers;
+}
+
+M_bool M_http2_frame_read_settings(const M_uint8 *data, size_t data_len, M_uint32 *flags, M_http2_settings_t *settings)
 {
 	size_t                 pos;
 	M_http2_frame_header_t frame_header;

@@ -82,13 +82,14 @@ typedef struct {
 	M_bool is_disable_rfc7540_priorities;
 } M_http2_settings_t;
 
-void   M_http2_frame_write_settings_ack(M_buf_t *buf);
-M_bool M_http2_frame_write_settings(M_buf_t *buf, M_uint32 flags, M_http2_settings_t *settings);
-M_bool M_http2_frame_read_settings(const char *data, size_t data_len, M_uint32 *flags, M_http2_settings_t *settings);
-M_bool M_http2_read_pri_str(const char *data, size_t data_len);
-void   M_http2_write_pri_str(M_buf_t *buf);
-M_bool M_http2_huffman_decode(M_buf_t *buf, const M_uint8 *data, size_t data_len);
-M_bool M_http2_huffman_encode(M_buf_t *buf, const M_uint8 *data, size_t data_len);
+void           M_http2_frame_write_settings_ack(M_buf_t *buf);
+M_bool         M_http2_frame_write_settings(M_buf_t *buf, M_uint32 flags, M_http2_settings_t *settings);
+M_bool         M_http2_frame_read_settings(const M_uint8 *data, size_t data_len, M_uint32 *flags, M_http2_settings_t *settings);
+M_bool         M_http2_read_pri_str(const char *data, size_t data_len);
+void           M_http2_write_pri_str(M_buf_t *buf);
+M_bool         M_http2_huffman_decode(M_buf_t *buf, const M_uint8 *data, size_t data_len);
+M_bool         M_http2_huffman_encode(M_buf_t *buf, const M_uint8 *data, size_t data_len);
+M_hash_dict_t *M_http2_frame_read_headers(const M_uint8 *data, size_t data_len);
 
 /*! @} */
 
