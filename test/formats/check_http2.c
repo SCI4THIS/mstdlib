@@ -15,6 +15,18 @@ do {\
 	suite_add_tcase(SUITENAME, tc);\
 } while (0)
 
+START_TEST(check_http2_frame_goaway)
+{
+	M_http2_goaway_t *goaway = NULL;
+	const M_uint8 frame[]    = {
+		0x00, 0x00, 0x08, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00
+	};
+	goaway = M_http2_frame_read_goaway(frame, sizeof(frame));
+	ck_assert_msg(goaway != NULL, "Should succeed");
+	M_free(goaway);
+}
+
 START_TEST(check_http2_data)
 {
 	const M_uint8 frame[] = {
@@ -230,6 +242,7 @@ int main(void)
 
 	suite = suite_create("http2");
 
+	add_test(suite, check_http2_frame_goaway);
 	add_test(suite, check_http2_frame_settings);
 	add_test(suite, check_http2_frame_headers);
 	add_test(suite, check_http2_pri_str);

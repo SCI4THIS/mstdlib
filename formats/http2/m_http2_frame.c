@@ -358,6 +358,37 @@ M_hash_dict_t *M_http2_frame_read_headers(const M_uint8 *data, size_t data_len)
 	return headers;
 }
 
+M_http2_goaway_t *M_http2_frame_read_goaway(const M_uint8 *data, size_t data_len)
+{
+	M_http2_frame_header_t  frame_header;
+	M_http2_goaway_t       *goaway;
+	M_uint32                stream_id;
+	M_uint32                error_code;
+	size_t                  pos        = 9;
+
+	if (data_len < 9)
+		return NULL;
+
+	M_http2_frame_header_read(data, data_len, &frame_header);
+
+	if (data_len < (9 + frame_header.len))
+		return NULL;
+
+	goaway = M_malloc_zero(sizeof(*goaway) + frame_header.len - 8);
+	M_mem_copy(&stream_id, &data[pos], sizeof(stream_id));
+	pos += sizeof(stream_id);
+	goaway->is_reset_stream = (stream_id & 0x80) != 0;
+	goaway->stream_id = M_ntoh32(stream_id) & 0x7FFFFFFF;
+	M_mem_copy(&error_code, &data[pos], sizeof(error_code));
+	pos += sizeof(error_code);
+	goaway->error_code = M_ntoh32(error_code);
+	goaway->debug_data_len = (frame_header.len - 8);
+	if (goaway->debug_data_len > 0) {
+		M_mem_copy(goaway->debug_data, &data[pos], goaway->debug_data_len);
+	}
+	return goaway;
+}
+
 typedef enum {
 	M_HTTP2_DATA_FRAME_FLAG_END_STREAM  = 0x01,
 	M_HTTP2_DATA_FRAME_FLAG_PADDED      = 0x08,
