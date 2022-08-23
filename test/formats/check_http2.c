@@ -24,6 +24,10 @@ START_TEST(check_http2_frame_goaway)
 	};
 	goaway = M_http2_frame_read_goaway(frame, sizeof(frame));
 	ck_assert_msg(goaway != NULL, "Should succeed");
+	ck_assert_msg(goaway->is_reset_stream == 0, "Should not be reset_stream");
+	ck_assert_msg(goaway->stream_id == 0, "Should be stream id 0");
+	ck_assert_msg(goaway->error_code == 0, "Should have error code 0");
+	ck_assert_msg(goaway->debug_data_len == 0, "Should have debug data len of 0");
 	M_free(goaway);
 }
 
