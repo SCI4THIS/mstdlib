@@ -358,6 +358,34 @@ M_hash_dict_t *M_http2_frame_read_headers(const M_uint8 *data, size_t data_len)
 	return headers;
 }
 
+typedef enum {
+	M_HTTP2_DATA_FRAME_FLAG_END_STREAM  = 0x01,
+	M_HTTP2_DATA_FRAME_FLAG_PADDED      = 0x08,
+} M_http2_data_frame_flag_t;
+
+M_bool M_http2_frame_read_data(const M_uint8 *data, size_t data_len, M_buf_t *buf)
+{
+	M_http2_frame_header_t frame_header;
+	M_uint8                pad_len = 0;
+	size_t                 pos     = 9;
+
+	if (data_len < 9)
+		return M_FALSE;
+
+	M_http2_frame_header_read(data, data_len, &frame_header);
+
+	if (data_len < (9 + frame_header.len))
+		return M_FALSE;
+
+	if ((frame_header.flags & M_HTTP2_DATA_FRAME_FLAG_PADDED) != 0) {
+		pad_len = data[pos++];
+	}
+
+	M_buf_add_bytes(buf, &data[pos], frame_header.len - pad_len);
+
+	return M_TRUE;
+}
+
 M_bool M_http2_frame_read_settings(const M_uint8 *data, size_t data_len, M_uint32 *flags, M_http2_settings_t *settings)
 {
 	size_t                 pos;

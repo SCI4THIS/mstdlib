@@ -90,6 +90,7 @@ void           M_http2_write_pri_str(M_buf_t *buf);
 M_bool         M_http2_huffman_decode(M_buf_t *buf, const M_uint8 *data, size_t data_len);
 M_bool         M_http2_huffman_encode(M_buf_t *buf, const M_uint8 *data, size_t data_len);
 M_hash_dict_t *M_http2_frame_read_headers(const M_uint8 *data, size_t data_len);
+M_bool         M_http2_frame_read_data(const M_uint8 *data, size_t data_len, M_buf_t *buf);
 
 /*! @} */
 
