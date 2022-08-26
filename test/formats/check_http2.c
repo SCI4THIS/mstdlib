@@ -15,6 +15,66 @@ do {\
 	suite_add_tcase(SUITENAME, tc);\
 } while (0)
 
+typedef struct {
+	size_t frame_begin_func_call_count;
+	size_t frame_end_func_call_count;
+} args_t;
+
+static M_http2_error_t check_http2_reader_frame_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
+{
+	(void)framehdr;
+	args_t *args = thunk;
+	args->frame_begin_func_call_count++;
+	return M_HTTP2_ERROR_SUCCESS;
+}
+
+static M_http2_error_t check_http2_reader_frame_end_func(M_http2_framehdr_t *framehdr, void *thunk)
+{
+	(void)framehdr;
+	args_t *args = thunk;
+	args->frame_end_func_call_count++;
+	return M_HTTP2_ERROR_SUCCESS;
+}
+
+struct M_http2_reader_callbacks test_cbs = {
+	check_http2_reader_frame_begin_func,
+	check_http2_reader_frame_end_func,
+};
+
+
+/*
+static void print_dict(M_hash_dict_t *dict)
+{
+	M_hash_dict_enum_t *hashenum;
+	const char         *key;
+	const char         *value;
+	M_hash_dict_enumerate(dict, &hashenum);
+	while (M_hash_dict_enumerate_next(dict, hashenum, &key, &value)) {
+		M_printf("\"%s\" = \"%s\"\n", key, value);
+	}
+	M_hash_dict_enumerate_free(hashenum);
+}
+*/
+
+static const M_uint8 test_goaway_frame[] = {
+	0x00, 0x00, 0x08, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00
+};
+
+START_TEST(check_http2_frame_funcs)
+{
+	args_t            args = { 0 };
+	size_t            len;
+	M_http2_reader_t *h2r  = M_http2_reader_create(&test_cbs, M_HTTP2_READER_NONE, &args);
+	M_http2_reader_read(h2r, test_goaway_frame, sizeof(test_goaway_frame), &len);
+	ck_assert_msg(len == sizeof(test_goaway_frame), "Should have read '%zu' not '%zu'", sizeof(test_goaway_frame), len);
+	ck_assert_msg(args.frame_begin_func_call_count == 1, "Should have called begin_func once");
+	ck_assert_msg(args.frame_end_func_call_count == 1, "Should have called end_func once");
+	M_http2_reader_destroy(h2r);
+}
+END_TEST
+
+/*
 START_TEST(check_http2_frame_goaway)
 {
 	M_http2_goaway_t *goaway = NULL;
@@ -65,9 +125,8 @@ START_TEST(check_http2_huffman)
    0x31, 0x60, 0x65, 0xc0, 0x03, 0xed, 0x4e, 0xe5, 0xb1, 0x06, 0x3d, 0x50, 0x07,
 	};
 	const char    *huffman_str2_decoded = "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1";
-	/*11111111|00100001*/
 	const M_uint8  huffman_str3[] = {
-		0xff, 0x21
+		0xff, 0x21 //11111111|00100001
 	};
 	const char    *huffman_str3_decoded = "?A";
 	M_buf_t *buf = M_buf_create();
@@ -146,20 +205,6 @@ START_TEST(check_http2_frame_settings)
 }
 END_TEST
 
-/*
-static void print_dict(M_hash_dict_t *dict)
-{
-	M_hash_dict_enum_t *hashenum;
-	const char         *key;
-	const char         *value;
-	M_hash_dict_enumerate(dict, &hashenum);
-	while (M_hash_dict_enumerate_next(dict, hashenum, &key, &value)) {
-		M_printf("\"%s\" = \"%s\"\n", key, value);
-	}
-	M_hash_dict_enumerate_free(hashenum);
-}
-*/
-
 START_TEST(check_http2_frame_headers)
 {
 	const M_uint8 frame[] = {
@@ -235,6 +280,7 @@ START_TEST(check_http2_frame_headers)
 	M_hash_dict_destroy(headers);
 }
 END_TEST
+*/
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
@@ -246,12 +292,15 @@ int main(void)
 
 	suite = suite_create("http2");
 
+	/*
 	add_test(suite, check_http2_frame_goaway);
 	add_test(suite, check_http2_frame_settings);
 	add_test(suite, check_http2_frame_headers);
 	add_test(suite, check_http2_pri_str);
 	add_test(suite, check_http2_huffman);
 	add_test(suite, check_http2_data);
+	*/
+	add_test(suite, check_http2_frame_funcs);
 
 	sr = srunner_create(suite);
 	if (getenv("CK_LOG_FILE_NAME")==NULL) srunner_set_log(sr, "check_http2.log");

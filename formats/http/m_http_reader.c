@@ -1146,6 +1146,11 @@ M_http_error_t M_http_reader_read(M_http_reader_t *httpr, const unsigned char *d
 	if (httpr->rstep == M_HTTP_READER_STEP_DONE)
 		return M_HTTP_ERROR_SUCCESS;
 
+	/* Try to read as HTTP2 first.  Fallback to HTTP1 on failure. */
+	res = M_http2_http_reader_read(httpr, data, data_len, len_read);
+	if (res == M_HTTP_ERROR_SUCCESS)
+		return M_HTTP_ERROR_SUCCESS;
+
 	parser = M_parser_create_const(data, data_len, M_PARSER_FLAG_NONE);
 
 	if (httpr->rstep == M_HTTP_READER_STEP_UNKNONW) {

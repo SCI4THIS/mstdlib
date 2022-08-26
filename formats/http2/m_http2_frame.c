@@ -1,59 +1,7 @@
 #include <mstdlib/mstdlib.h>
 #include <mstdlib/formats/m_http2.h>
 
-static const char M_http2_pri_str[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-
-typedef struct {
-	size_t               len;
-	M_http2_frame_type_t type;
-	M_uint8              flags;
-	M_bool               is_R_set;
-	M_uint32             stream_id;
-} M_http2_frame_header_t;
-
-static void M_http2_frame_header_read(const M_uint8 *data, size_t data_len, M_http2_frame_header_t *frame_header)
-{
-	M_uint32 frame_len  = 0;
-	M_uint32 stream_id_R;
-
-	if (data_len < 9)
-		return;
-
-	M_mem_copy(&frame_len, &data[0], 3);
-	frame_header->type  = (M_uint8)data[3];
-	frame_header->flags = (M_uint8)data[4];
-	M_mem_copy(&stream_id_R, &data[5], 4);
-
-	frame_header->len = M_ntoh32(frame_len) >> 8; /* M_ntoh24() */
-	frame_header->stream_id = M_ntoh32(stream_id_R);
-
-	if ((data[5] & 0x80) != 0) {
-		frame_header->is_R_set = M_TRUE;
-		frame_header->stream_id &= 0x7FFFFFFF;
-	} else {
-		frame_header->is_R_set = M_FALSE;
-	}
-}
-
-static void M_http2_frame_header_write(M_buf_t *buf, M_http2_frame_header_t *frame_header)
-{
-	M_uint8  bytes[9];
-	M_uint32 frame_len;
-	M_uint32 stream_id_R;
-
-	frame_len = M_hton32((M_uint32)frame_header->len) >> 8; /* M_hton24() */
-	stream_id_R = M_hton32((M_uint32)frame_header->stream_id);
-	M_mem_copy(&bytes[0], &frame_len, 3);
-	bytes[3] = (M_uint8)frame_header->type;
-	bytes[4] = frame_header->flags;
-	M_mem_copy(&bytes[5], &stream_id_R, 4);
-	if (frame_header->is_R_set) {
-		bytes[5] |= 0x80;
-	}
-
-	M_buf_add_bytes(buf, bytes, 9);
-
-}
+const char *M_http2_pri_str = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 static void M_http2_frame_write_setting(M_buf_t *buf, M_uint32 flags, M_http2_settings_id_t id, size_t val)
 {
@@ -180,7 +128,7 @@ typedef enum {
 	M_HTTP2_HEADER_FRAME_FLAG_PRIORITY    = 0x20,
 } M_http2_header_frame_flag_t;
 
-#include "m_http2_static_header_table.c"
+#include "generated/m_http2_static_header_table.c"
 /* m_http2_static_header_table.c initializes the following struct:
 	* static struct {
 	* 	const char *key;
@@ -356,6 +304,190 @@ M_hash_dict_t *M_http2_frame_read_headers(const M_uint8 *data, size_t data_len)
 	}
 
 	return headers;
+}
+
+static void M_http2_headers_frame_encode_keyval_match(M_uint8 idx, const char *key, const char *value, M_buf_t *buf)
+{
+	M_buf_add_byte(buf, 0x80 | i);
+}
+
+static void M_http2_headers_frame_encode_key_match(M_uint8 idx, const char *key, const char *value, M_buf_t *buf)
+{
+	if (idx < 0x0F) {
+		M_buf_add_byte(buf, idx);
+	} else {
+		M_buf_add_byte(buf, 0x0F);
+		M_http2_encode_number_chain(buf, idx - 0x0F);
+	}
+	M_http2_encode_string(buf, value);
+}
+
+static void M_http2_headers_frame_encode_no_match(const char *key, const char *value, M_buf_t *buf)
+{
+	M_buf_add_byte(buf, 0x00);
+	M_http2_encode_string(buf, key);
+	M_http2_encode_string(buf, value);
+}
+
+void M_http2_headers_frame_encode(const char *key, const char *value, M_buf_t *buf)
+{
+	M_uint8 i;
+	for (i=1; i<sizeof(M_http2_header_table)/sizeof(M_http2_header_table[0]); i++) {
+		if (M_str_eq(M_http2_header_table[i].key, key)) {
+			if (M_https_header_table[i].value == NULL) {
+				return M_http2_headers_frame_encode_key_match(i, key, value, buf);
+			}
+			if (M_str_eq(M_http2_header_table[i].value, value)) {
+				return M_http2_headers_frame_encode_keyval_match(i, key, value, buf);
+			}
+		}
+	}
+	return M_http2_headers_frame_encode_no_match(key, value, buf);
+}
+
+size_t M_http2_decode_header(const M_uint8* data, size_t data_len, M_http_reader_header_full_func cb, void *thunk)
+{
+	size_t      pos         = 0;
+	M_uint8     byte        = data[pos++];
+	M_uint8     mask        = 0;
+	const char *key_const   = NULL;
+	const char *value_const = NULL;
+	char       *key         = NULL;
+	char       *value       = NULL;
+	size_t      idx;
+
+	M_http2_header_entry_type_t type = M_http2_frame_headers_entry_type(byte);
+	switch (type) {
+		case M_HTTP2_HEADER_ENTRY_TYPE_INDEXED_FIELD:
+			idx = byte & 0x7F;
+			key_const = M_http2_header_table[idx].key;
+			value_const = M_http2_header_table[idx].value;
+			cb(key_const, value_const, thunk);
+			return pos;
+		case M_HTTP2_HEADER_ENTRY_TYPE_DYNAMIC_TABLE_SIZE_UPDATE:
+			return pos;
+		case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_INDEX_NAME:
+		case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_NEVER_INDEX_INDEX_NAME:
+		case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_INCREMENTAL_INDEX_INDEX_NAME:
+			mask = 0x0F;
+			if (type == M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_INCREMENTAL_INDEX_INDEX_NAME)
+				mask = 0x3F;
+			if ((byte & mask) == mask) {
+				idx  = mask;
+				idx += M_http2_decode_number_chain(data, data_len, &pos);
+			} else {
+				idx  = byte & mask;
+			}
+			key_const = M_http2_header_table[idx].key;
+			value = M_http2_decode_string_alloc(data, data_len, &pos);
+			cb(key_const, value, thunk);
+			M_free(value);
+			return pos;
+		case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_NEVER_INDEX_NEW_NAME:
+		case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_NEW_NAME:
+		case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_INCREMENTAL_INDEX_NEW_NAME:
+			key   = M_http2_decode_string_alloc(data, data_len, &pos);
+			value = M_http2_decode_string_alloc(data, data_len, &pos);
+			cb(key, value, thunk);
+			M_free(key);
+			M_free(value);
+			return pos;
+		case M_HTTP2_HEADER_ENTRY_TYPE_ERROR:
+			break;
+	}
+	return 0;
+}
+
+void M_http2_headers_frame_decode(const M_uint8* data, size_t data_len, M_http_reader_header_full_func entry_cb, void *thunk)
+{
+	M_http2_frame_header_t      frame_header     = { 0 };
+	size_t                      frame_pos        = 9;
+	M_uint8                     pad_length       = 0;
+	const char                 *key              = NULL;
+	const char                 *value            = NULL;
+	M_uint64                    u64              = 0;
+	char                       *key_str          = NULL;
+	char                       *value_str        = NULL;
+	M_uint8                     mask;
+	M_http2_header_entry_type_t entry_type;
+
+	if (data_len < 9)
+		return;
+
+	M_http2_frame_header_read(data, data_len, &frame_header);
+
+	if (data_len < (9 + frame_header.len))
+		return;
+
+	if (frame_header.flags & M_HTTP2_HEADER_FRAME_FLAG_PADDED) {
+		pad_length = data[frame_pos++];
+	}
+
+	if (frame_header.flags & M_HTTP2_HEADER_FRAME_FLAG_PRIORITY) {
+		struct {
+			M_bool   exclusive;
+			M_uint32 stream_dependency_id;
+			M_uint8  weight;
+		} priority = { 0 };
+		M_uint32 stream_id;
+		priority.exclusive = (data[frame_pos++] & 0x80) != 0;
+		M_mem_copy(&stream_id, &data[frame_pos], sizeof(stream_id));
+		priority.stream_dependency_id = M_hton32(stream_id);
+		priority.stream_dependency_id &= 0x7FFFFFFF;
+		frame_pos += 4;
+		priority.weight = data[frame_pos++];
+	}
+
+	while (frame_pos + pad_length < frame_header.len) {
+		entry_type = M_http2_frame_headers_entry_type(data[frame_pos]);
+		switch (entry_type) {
+			case M_HTTP2_HEADER_ENTRY_TYPE_INDEXED_FIELD:
+				key = M_http2_header_table[data[frame_pos] & 0x7F].key;
+				value = M_http2_header_table[data[frame_pos] & 0x7F].value;
+				entry_cb(key, value, thunk);
+				frame_pos++;
+				break;
+			case M_HTTP2_HEADER_ENTRY_TYPE_DYNAMIC_TABLE_SIZE_UPDATE:
+			frame_pos++;
+				break;
+			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_INDEX_NAME:
+			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_NEVER_INDEX_INDEX_NAME:
+			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_INCREMENTAL_INDEX_INDEX_NAME:
+				if (entry_type == M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_INDEX_NAME) {
+					mask = 0x0F;
+				}
+				if (entry_type == M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_NEVER_INDEX_INDEX_NAME) {
+					mask = 0x0F;
+				}
+				if (entry_type == M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_INCREMENTAL_INDEX_INDEX_NAME) {
+					mask = 0x3F;
+				}
+				if (data[frame_pos] == mask) {
+					frame_pos++;
+					frame_pos += M_http2_frame_read_header_integer(&data[frame_pos], &u64);
+					u64 += mask;
+					key = M_http2_header_table[u64].key;
+				} else {
+					key = M_http2_header_table[data[frame_pos++] & mask].key;
+				}
+				frame_pos += M_http2_frame_read_header_string(&data[frame_pos], &value_str);
+				entry_cb(key, value_str, thunk);
+				M_free(value_str);
+				break;
+			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_NEVER_INDEX_NEW_NAME:
+			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_WITHOUT_INDEX_NEW_NAME:
+			case M_HTTP2_HEADER_ENTRY_TYPE_LITERAL_FIELD_INCREMENTAL_INDEX_NEW_NAME:
+				frame_pos++;
+				frame_pos += M_http2_frame_read_header_string(&data[frame_pos], &key_str);
+				frame_pos += M_http2_frame_read_header_string(&data[frame_pos], &value_str);
+				entry_cb(key_str, value_str, thunk);
+				M_free(key_str);
+				M_free(value_str);
+				break;
+			case M_HTTP2_HEADER_ENTRY_TYPE_ERROR:
+				break;
+		}
+	}
 }
 
 M_http2_goaway_t *M_http2_frame_read_goaway(const M_uint8 *data, size_t data_len)
