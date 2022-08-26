@@ -66,16 +66,16 @@ typedef enum {
 	M_HTTP2_SETTING_NO_RFC7540_PRIORITIES   = 0x09,
 } M_http2_setting_type_t;
 
-typedef struct {
-	size_t header_table_size;
-	M_bool is_enable_push;
-	size_t max_concurrent_streams;
-	size_t initial_window_size;
-	size_t max_frame_size;
-	size_t max_header_list_size;
-	M_bool is_enable_connect_protocol;
-	M_bool is_disable_rfc7540_priorities;
-} M_http2_settings_t;
+typedef enum {
+	M_HTTP2_HT_RFC7541_6_1,
+	M_HTTP2_HT_RFC7541_6_2_1_2_KEY_VAL,
+	M_HTTP2_HT_RFC7541_6_2_1_1_VAL,
+	M_HTTP2_HT_RFC7541_6_2_2_2_KEY_VAL,
+	M_HTTP2_HT_RFC7541_6_2_2_1_VAL,
+	M_HTTP2_HT_RFC7541_6_2_3_2_KEY_VAL,
+	M_HTTP2_HT_RFC7541_6_2_3_1_VAL,
+	M_HTTP2_HT_RFC7541_6_3_DYNAMIC_TABLE,
+} M_http2_header_type_t;
 
 typedef union {
 	M_uint32 u32;
@@ -140,6 +140,8 @@ typedef enum {
 	M_HTTP2_ERROR_INVALID_SETTING_TYPE,
 	M_HTTP2_ERROR_INTERNAL,
 	M_HTTP2_ERROR_MISALIGNED_SETTINGS,
+	M_HTTP2_ERROR_INVALID_TABLE_INDEX,
+	M_HTTP2_ERROR_UNSUPPORTED,
 } M_http2_error_t;
 
 
@@ -170,6 +172,18 @@ typedef struct {
 	M_union_u32_u8          value;
 } M_http2_setting_t;
 
+typedef struct {
+	M_http2_framehdr_t *framehdr;
+	M_http2_stream_t    stream;
+	M_uint8             weight;
+} M_http2_header_priority_t;
+
+typedef struct {
+	M_http2_framehdr_t *framehdr;
+	const char         *key;
+	const char         *value;
+} M_http2_header_t;
+
 typedef M_http2_error_t (*M_http2_reader_frame_begin_func)(M_http2_framehdr_t *framehdr, void *thunk);
 typedef M_http2_error_t (*M_http2_reader_frame_end_func)(M_http2_framehdr_t *framehdr, void *thunk);
 typedef M_http2_error_t (*M_http2_reader_goaway_func)(M_http2_goaway_t *goaway, void *thunk);
@@ -178,17 +192,25 @@ typedef M_http2_error_t (*M_http2_reader_settings_begin_func)(M_http2_framehdr_t
 typedef M_http2_error_t (*M_http2_reader_settings_end_func)(M_http2_framehdr_t *framehdr, void *thunk);
 typedef M_http2_error_t (*M_http2_reader_setting_func)(M_http2_setting_t *setting, void *thunk);
 typedef void            (*M_http2_reader_error_func)(M_http2_error_t errcode, const char *errmsg);
+typedef M_http2_error_t (*M_http2_reader_headers_begin_func)(M_http2_framehdr_t *framehdr, void *thunk);
+typedef M_http2_error_t (*M_http2_reader_headers_end_func)(M_http2_framehdr_t *framehdr, void *thunk);
+typedef M_http2_error_t (*M_http2_reader_header_priority_func)(M_http2_header_priority_t *priority, void *thunk);
+typedef M_http2_error_t (*M_http2_reader_header_func)(M_http2_header_t *header, void *thunk);
 
 /*! Callbacks for various stages of parsing. */
 struct M_http2_reader_callbacks {
-	M_http2_reader_frame_begin_func    frame_begin_func;
-	M_http2_reader_frame_end_func      frame_end_func;
-	M_http2_reader_goaway_func         goaway_func;
-	M_http2_reader_data_func           data_func;
-	M_http2_reader_settings_begin_func settings_begin_func;
-	M_http2_reader_settings_end_func   settings_end_func;
-	M_http2_reader_setting_func        setting_func;
-	M_http2_reader_error_func          error_func;
+	M_http2_reader_frame_begin_func     frame_begin_func;
+	M_http2_reader_frame_end_func       frame_end_func;
+	M_http2_reader_goaway_func          goaway_func;
+	M_http2_reader_data_func            data_func;
+	M_http2_reader_settings_begin_func  settings_begin_func;
+	M_http2_reader_settings_end_func    settings_end_func;
+	M_http2_reader_setting_func         setting_func;
+	M_http2_reader_error_func           error_func;
+	M_http2_reader_headers_begin_func   headers_begin_func;
+	M_http2_reader_headers_end_func     headers_end_func;
+	M_http2_reader_header_priority_func header_priority_func;
+	M_http2_reader_header_func          header_func;
 };
 
 M_API M_http2_reader_t *M_http2_reader_create(struct M_http2_reader_callbacks *cbs, M_uint32 flags, void *thunk);
