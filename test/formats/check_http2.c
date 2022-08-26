@@ -20,6 +20,9 @@ typedef struct {
 	size_t frame_end_func_call_count;
 	size_t goaway_func_call_count;
 	size_t data_func_call_count;
+	size_t settings_begin_func_call_count;
+	size_t settings_end_func_call_count;
+	size_t setting_func_call_count;
 } args_t;
 
 static M_http2_error_t check_http2_reader_frame_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
@@ -55,11 +58,47 @@ static M_http2_error_t check_http2_reader_data_func(M_http2_data_t *data, void *
 	return M_HTTP2_ERROR_SUCCESS;
 }
 
+static M_http2_error_t check_http2_reader_settings_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
+{
+	(void)framehdr;
+	args_t *args = thunk;
+	args->settings_begin_func_call_count++;
+	M_printf("settings_begin_func()\n");
+	return M_HTTP2_ERROR_SUCCESS;
+}
+
+static M_http2_error_t check_http2_reader_settings_end_func(M_http2_framehdr_t *framehdr, void *thunk)
+{
+	(void)framehdr;
+	args_t *args = thunk;
+	args->settings_end_func_call_count++;
+	M_printf("settings_end_func()\n");
+	return M_HTTP2_ERROR_SUCCESS;
+}
+
+static M_http2_error_t check_http2_reader_setting_func(M_http2_setting_t *setting, void *thunk)
+{
+	(void)setting;
+	args_t *args = thunk;
+	M_printf("setting: %04x: %08x\n", (M_uint16)setting->type, setting->value.u32);
+	args->setting_func_call_count++;
+	return M_HTTP2_ERROR_SUCCESS;
+}
+
+static void check_http2_reader_error_func(M_http2_error_t errcode, const char *errmsg)
+{
+	M_printf("ERROR: (%d) \"%s\"\n", errcode, errmsg);
+}
+
 struct M_http2_reader_callbacks test_cbs = {
 	check_http2_reader_frame_begin_func,
 	check_http2_reader_frame_end_func,
 	check_http2_reader_goaway_func,
 	check_http2_reader_data_func,
+	check_http2_reader_settings_begin_func,
+	check_http2_reader_settings_end_func,
+	check_http2_reader_setting_func,
+	check_http2_reader_error_func,
 };
 
 
@@ -91,6 +130,10 @@ static const M_uint8 test_data_frame[] = {
 	0x5d, 0x2d, 0x2d, 0x3e, 0x0a, 0x3c, 0x21, 0x2d, 0x2d, 0x5b, 0x69, 0x66, 0x20, 0x6c, 0x74, 0x20,
 };
 
+static const M_uint8 test_settings_frame[] = {
+	0x00, 0x00, 0x06, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x64
+};
+
 START_TEST(check_http2_frame_funcs)
 {
 	args_t            args = { 0 };
@@ -99,55 +142,26 @@ START_TEST(check_http2_frame_funcs)
 
 	M_http2_reader_read(h2r, test_goaway_frame, sizeof(test_goaway_frame), &len);
 	ck_assert_msg(len == sizeof(test_goaway_frame), "Should have read '%zu' not '%zu'", sizeof(test_goaway_frame), len);
-	ck_assert_msg(args.frame_begin_func_call_count == 1, "Should have called begin_func once");
-	ck_assert_msg(args.frame_end_func_call_count == 1, "Should have called end_func once");
+	ck_assert_msg(args.frame_begin_func_call_count == 1, "Should have called frame_begin_func once");
+	ck_assert_msg(args.frame_end_func_call_count == 1, "Should have called frame_end_func once");
 	ck_assert_msg(args.goaway_func_call_count == 1, "Should have called goaway_func once");
 
 	M_http2_reader_read(h2r, test_data_frame, sizeof(test_data_frame), &len);
-	ck_assert_msg(len == sizeof(test_data_frame), "Should have read '%zu' not '%zu'", sizeof(test_goaway_frame), len);
-	ck_assert_msg(args.frame_begin_func_call_count == 2, "Should have called begin_func once");
-	ck_assert_msg(args.frame_end_func_call_count == 2, "Should have called end_func once");
+	ck_assert_msg(len == sizeof(test_data_frame), "Should have read '%zu' not '%zu'", sizeof(test_data_frame), len);
+	ck_assert_msg(args.frame_begin_func_call_count == 2, "Should have called frame_begin_func twice");
+	ck_assert_msg(args.frame_end_func_call_count == 2, "Should have called frame_end_func twice");
 	ck_assert_msg(args.data_func_call_count == 1, "Should have called data_func once");
+
+	M_http2_reader_read(h2r, test_settings_frame, sizeof(test_settings_frame), &len);
+	ck_assert_msg(len == sizeof(test_settings_frame), "Should have read '%zu' not '%zu'", sizeof(test_settings_frame), len);
+	ck_assert_msg(args.frame_begin_func_call_count == 3, "Should have called frame_begin_func thrice");
+	ck_assert_msg(args.frame_end_func_call_count == 3, "Should have called frame_end_func thrice");
+	ck_assert_msg(args.settings_begin_func_call_count == 1, "Should have called settings_begin_func once");
+	ck_assert_msg(args.settings_end_func_call_count == 1, "Should have called settings_end_func once");
+
 	M_http2_reader_destroy(h2r);
 }
 END_TEST
-
-/*
-START_TEST(check_http2_frame_goaway)
-{
-	M_http2_goaway_t *goaway = NULL;
-	const M_uint8 frame[]    = {
-		0x00, 0x00, 0x08, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00
-	};
-	goaway = M_http2_frame_read_goaway(frame, sizeof(frame));
-	ck_assert_msg(goaway != NULL, "Should succeed");
-	ck_assert_msg(goaway->is_reset_stream == 0, "Should not be reset_stream");
-	ck_assert_msg(goaway->stream_id == 0, "Should be stream id 0");
-	ck_assert_msg(goaway->error_code == 0, "Should have error code 0");
-	ck_assert_msg(goaway->debug_data_len == 0, "Should have debug data len of 0");
-	M_free(goaway);
-}
-
-START_TEST(check_http2_data)
-{
-	const M_uint8 frame[] = {
-		0x00, 0x00, 0x57, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x0a, 0x3c, 0x21, 0x44, 0x4f, 0x43, 0x54,
-		0x59, 0x50, 0x45, 0x20, 0x68, 0x74, 0x6d, 0x6c, 0x3e, 0x0a, 0x3c, 0x21, 0x2d, 0x2d, 0x5b, 0x69,
-		0x66, 0x20, 0x49, 0x45, 0x4d, 0x6f, 0x62, 0x69, 0x6c, 0x65, 0x20, 0x37, 0x20, 0x5d, 0x3e, 0x3c,
-		0x68, 0x74, 0x6d, 0x6c, 0x20, 0x63, 0x6c, 0x61, 0x73, 0x73, 0x3d, 0x22, 0x6e, 0x6f, 0x2d, 0x6a,
-		0x73, 0x20, 0x69, 0x65, 0x6d, 0x37, 0x22, 0x3e, 0x3c, 0x21, 0x5b, 0x65, 0x6e, 0x64, 0x69, 0x66,
-		0x5d, 0x2d, 0x2d, 0x3e, 0x0a, 0x3c, 0x21, 0x2d, 0x2d, 0x5b, 0x69, 0x66, 0x20, 0x6c, 0x74, 0x20,
-	};
-	const char *frame_str =
-		"\n<!DOCTYPE html>\n<!--[if IEMobile 7 ]><html class=\"no-js iem7\"><![endif]-->\n<!--[if lt ";
-	M_buf_t *buf = M_buf_create();;
-	char    *str = NULL;
-	ck_assert_msg(M_http2_frame_read_data(frame, sizeof(frame), buf), "Should succeed");
-	str = M_buf_finish_str(buf, NULL);
-	ck_assert_msg(M_str_eq(str, frame_str), "Should have parsed correctly");
-	M_free(str);
-}
 
 START_TEST(check_http2_huffman)
 {
@@ -168,11 +182,11 @@ START_TEST(check_http2_huffman)
 	};
 	const char    *huffman_str3_decoded = "?A";
 	M_buf_t *buf = M_buf_create();
-	ck_assert_msg(M_http2_huffman_decode(buf, huffman_str, sizeof(huffman_str)), "Should succeed");
+	ck_assert_msg(M_http2_decode_huffman(huffman_str, sizeof(huffman_str), buf), "Should succeed");
 	str = M_buf_finish_str(buf, NULL);
 	ck_assert_msg(M_str_eq(str, huffman_str_decoded), "Should huffman decode to \"%s\" not \"%s\"", huffman_str_decoded, str);
 	buf = M_buf_create();
-	ck_assert_msg(M_http2_huffman_encode(buf, (unsigned char *)str, M_str_len(str)), "Should succeed");
+	ck_assert_msg(M_http2_encode_huffman((unsigned char *)str, M_str_len(str), buf), "Should succeed");
 	M_free(str);
 	str = M_buf_finish_str(buf, &str_len);
 	ck_assert_msg(M_mem_eq(str, huffman_str, sizeof(huffman_str)), "Should huffman encode back");
@@ -180,11 +194,11 @@ START_TEST(check_http2_huffman)
 	M_free(str);
 
 	buf = M_buf_create();
-	ck_assert_msg(M_http2_huffman_decode(buf, huffman_str2, sizeof(huffman_str2)), "Should succeed");
+	ck_assert_msg(M_http2_decode_huffman(huffman_str2, sizeof(huffman_str2), buf), "Should succeed");
 	str = M_buf_finish_str(buf, NULL);
 	ck_assert_msg(M_str_eq(str, huffman_str2_decoded), "Should huffman decode to \"%s\" not \"%s\"", huffman_str2_decoded, str);
 	buf = M_buf_create();
-	ck_assert_msg(M_http2_huffman_encode(buf, (unsigned char *)str, M_str_len(str)), "Should succeed");
+	ck_assert_msg(M_http2_encode_huffman((unsigned char *)str, M_str_len(str), buf), "Should succeed");
 	M_free(str);
 	str = M_buf_finish_str(buf, &str_len);
 	ck_assert_msg(M_mem_eq(str, huffman_str2, sizeof(huffman_str2)), "Should huffman encode back");
@@ -192,11 +206,11 @@ START_TEST(check_http2_huffman)
 	M_free(str);
 
 	buf = M_buf_create();
-	ck_assert_msg(M_http2_huffman_decode(buf, huffman_str3, sizeof(huffman_str3)), "Should succeed");
+	ck_assert_msg(M_http2_decode_huffman(huffman_str3, sizeof(huffman_str3), buf), "Should succeed");
 	str = M_buf_finish_str(buf, NULL);
 	ck_assert_msg(M_str_eq(str, huffman_str3_decoded), "Should huffman decode to \"%s\" not \"%s\"", huffman_str3_decoded, str);
 	buf = M_buf_create();
-	ck_assert_msg(M_http2_huffman_encode(buf, (unsigned char *)str, M_str_len(str)), "Should succeed");
+	ck_assert_msg(M_http2_encode_huffman((unsigned char *)str, M_str_len(str), buf), "Should succeed");
 	M_free(str);
 	str = M_buf_finish_str(buf, &str_len);
 	ck_assert_msg(M_mem_eq(str, huffman_str3, sizeof(huffman_str3)), "Should huffman encode back");
@@ -205,40 +219,12 @@ START_TEST(check_http2_huffman)
 }
 END_TEST
 
+/*
 START_TEST(check_http2_pri_str)
 {
 	M_buf_t *buf = M_buf_create();
 	M_http2_write_pri_str(buf);
 	ck_assert_msg(M_http2_read_pri_str(M_buf_peek(buf), M_buf_len(buf)), "Should succeed");
-	M_buf_cancel(buf);
-}
-END_TEST
-
-START_TEST(check_http2_frame_settings)
-{
-	M_http2_settings_t  settings;
-	M_uint32            flags = 0;
-	M_buf_t            *buf   = M_buf_create();
-
-	const M_uint8 frame1[] = {
-		0x00, 0x00, 0x06, 0x04, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x64
-	};
-
-	ck_assert_msg(M_http2_frame_read_settings(frame1, sizeof(frame1), &flags, &settings), "Should succeed");
-	ck_assert_msg(flags == (1 << M_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS), "Should set max concurrent");
-	ck_assert_msg(settings.max_concurrent_streams == 100, "Should set max concurrent to 100");
-
-	ck_assert_msg(M_http2_frame_write_settings(buf, flags, &settings), "Should succeed");
-	ck_assert_msg(M_buf_len(buf) == sizeof(frame1), "Should be same size as frame");
-	ck_assert_msg(M_mem_eq(M_buf_peek(buf), frame1, sizeof(frame1)), "Should generate same as frame1");
-
-	M_buf_drop(buf, M_buf_len(buf));
-
-	M_http2_frame_write_settings_ack(buf);
-	ck_assert_msg(M_http2_frame_read_settings((M_uint8*)M_buf_peek(buf), M_buf_len(buf), &flags, &settings), "Should succeed");
-	ck_assert_msg(flags == (1u << M_HTTP2_SETTINGS_ACK), "Should set ACK flag");
-
 	M_buf_cancel(buf);
 }
 END_TEST
@@ -330,15 +316,12 @@ int main(void)
 
 	suite = suite_create("http2");
 
+	add_test(suite, check_http2_huffman);
+	add_test(suite, check_http2_frame_funcs);
 	/*
-	add_test(suite, check_http2_frame_goaway);
-	add_test(suite, check_http2_frame_settings);
 	add_test(suite, check_http2_frame_headers);
 	add_test(suite, check_http2_pri_str);
-	add_test(suite, check_http2_huffman);
-	add_test(suite, check_http2_data);
 	*/
-	add_test(suite, check_http2_frame_funcs);
 
 	sr = srunner_create(suite);
 	if (getenv("CK_LOG_FILE_NAME")==NULL) srunner_set_log(sr, "check_http2.log");

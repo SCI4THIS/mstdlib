@@ -56,16 +56,15 @@ typedef enum {
 } M_http2_frame_type_t;
 
 typedef enum {
-	M_HTTP2_SETTINGS_HEADER_TABLE_SIZE       = 0x01,
-	M_HTTP2_SETTINGS_ENABLE_PUSH             = 0x02,
-	M_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS  = 0x03,
-	M_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE     = 0x04,
-	M_HTTP2_SETTINGS_MAX_FRAME_SIZE          = 0x05,
-	M_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE    = 0x06,
-	M_HTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL = 0x08,
-	M_HTTP2_SETTINGS_NO_RFC7540_PRIORITIES   = 0x09,
-	M_HTTP2_SETTINGS_ACK                     = 31    /*!< signifies SETTINGS frame was an ACK */
-} M_http2_settings_id_t;
+	M_HTTP2_SETTING_HEADER_TABLE_SIZE       = 0x01,
+	M_HTTP2_SETTING_ENABLE_PUSH             = 0x02,
+	M_HTTP2_SETTING_MAX_CONCURRENT_STREAMS  = 0x03,
+	M_HTTP2_SETTING_INITIAL_WINDOW_SIZE     = 0x04,
+	M_HTTP2_SETTING_MAX_FRAME_SIZE          = 0x05,
+	M_HTTP2_SETTING_MAX_HEADER_LIST_SIZE    = 0x06,
+	M_HTTP2_SETTING_ENABLE_CONNECT_PROTOCOL = 0x08,
+	M_HTTP2_SETTING_NO_RFC7540_PRIORITIES   = 0x09,
+} M_http2_setting_type_t;
 
 typedef struct {
 	size_t header_table_size;
@@ -83,6 +82,11 @@ typedef union {
 	M_uint8  u8[4];
 } M_union_u32_u8;
 
+typedef union {
+	M_uint16 u16;
+	M_uint8  u8[2];
+} M_union_u16_u8;
+
 typedef struct {
 	M_bool         is_R_set;
 	M_union_u32_u8 id;
@@ -95,42 +99,13 @@ typedef struct {
 	M_http2_stream_t     stream;
 } M_http2_framehdr_t;
 
-typedef struct {
-	M_http2_framehdr_t *framehdr;
-	M_http2_stream_t    stream;
-	M_union_u32_u8      errcode;
-	const M_uint8      *debug_data;
-	size_t              debug_data_len;
-} M_http2_goaway_t;
-
-typedef struct {
-	M_http2_framehdr_t *framehdr;
-	const M_uint8      *data;
-	size_t              data_len;
-	const M_uint8      *pad;
-	M_uint8             pad_len;
-} M_http2_data_t;
-
 
 void              M_http2_encode_header(M_buf_t *buf, const char *key, const char *value);
 size_t            M_http2_decode_header(const M_uint8* data, size_t data_len, M_http_reader_header_full_func entry_cb, void *thunk);
 void              M_http2_headers_frame_decode(const M_uint8* data, size_t data_len, M_http_reader_header_full_func entry_cb, void *thunk);
 void              M_http2_data_frame_decode(const M_uint8* data, size_t data_len, M_http_reader_body_func entry_cb, void *thunk);
 
-void              M_http2_frame_write_settings_ack(M_buf_t *buf);
-M_bool            M_http2_frame_write_settings(M_buf_t *buf, M_uint32 flags, M_http2_settings_t *settings);
-M_bool            M_http2_frame_read_settings(const M_uint8 *data, size_t data_len, M_uint32 *flags, M_http2_settings_t *settings);
-M_bool            M_http2_read_pri_str(const char *data, size_t data_len);
-void              M_http2_write_pri_str(M_buf_t *buf);
-M_bool            M_http2_huffman_decode(M_buf_t *buf, const M_uint8 *data, size_t data_len);
-M_bool            M_http2_huffman_encode(M_buf_t *buf, const M_uint8 *data, size_t data_len);
-M_hash_dict_t    *M_http2_frame_read_headers(const M_uint8 *data, size_t data_len);
-M_bool            M_http2_frame_read_data(const M_uint8 *data, size_t data_len, M_buf_t *buf);
-M_http2_goaway_t *M_http2_frame_read_goaway(const M_uint8 *data, size_t data_len);
-size_t            M_http2_read_frame(const M_uint8 *data, size_t data_len);
-/*
-void              M_http2_frame_header_read(const M_uint8 *data, size_t data_len, M_http2_frame_header_t *frame_header);
-*/
+
 M_bool  M_http2_encode_huffman(const M_uint8 *data, size_t data_len, M_buf_t *buf);
 void    M_http2_encode_number_chain(M_uint64 num, M_buf_t *buf);
 void    M_http2_encode_string(const char *str, M_buf_t *buf);
@@ -162,7 +137,9 @@ typedef enum {
 	M_HTTP2_ERROR_STOP,                       /*!< Stop processing (Used by callback functions to indicate non-error but stop processing). */
 	M_HTTP2_ERROR_INVALIDUSE,                 /*!< Invalid use. */
 	M_HTTP2_ERROR_INVALID_FRAME_TYPE,
+	M_HTTP2_ERROR_INVALID_SETTING_TYPE,
 	M_HTTP2_ERROR_INTERNAL,
+	M_HTTP2_ERROR_MISALIGNED_SETTINGS,
 } M_http2_error_t;
 
 
@@ -171,17 +148,47 @@ typedef enum {
 	M_HTTP2_READER_NONE = 0,  /*!< Default operation. */
 } M_http2_reader_flags_t;
 
+typedef struct {
+	M_http2_framehdr_t *framehdr;
+	M_http2_stream_t    stream;
+	M_union_u32_u8      errcode;
+	const M_uint8      *debug_data;
+	size_t              debug_data_len;
+} M_http2_goaway_t;
+
+typedef struct {
+	M_http2_framehdr_t *framehdr;
+	const M_uint8      *data;
+	size_t              data_len;
+	const M_uint8      *pad;
+	M_uint8             pad_len;
+} M_http2_data_t;
+
+typedef struct {
+	M_http2_framehdr_t     *framehdr;
+	M_http2_setting_type_t  type;
+	M_union_u32_u8          value;
+} M_http2_setting_t;
+
 typedef M_http2_error_t (*M_http2_reader_frame_begin_func)(M_http2_framehdr_t *framehdr, void *thunk);
 typedef M_http2_error_t (*M_http2_reader_frame_end_func)(M_http2_framehdr_t *framehdr, void *thunk);
 typedef M_http2_error_t (*M_http2_reader_goaway_func)(M_http2_goaway_t *goaway, void *thunk);
 typedef M_http2_error_t (*M_http2_reader_data_func)(M_http2_data_t *data, void *thunk);
+typedef M_http2_error_t (*M_http2_reader_settings_begin_func)(M_http2_framehdr_t *framehdr, void *thunk);
+typedef M_http2_error_t (*M_http2_reader_settings_end_func)(M_http2_framehdr_t *framehdr, void *thunk);
+typedef M_http2_error_t (*M_http2_reader_setting_func)(M_http2_setting_t *setting, void *thunk);
+typedef void            (*M_http2_reader_error_func)(M_http2_error_t errcode, const char *errmsg);
 
 /*! Callbacks for various stages of parsing. */
 struct M_http2_reader_callbacks {
-	M_http2_reader_frame_begin_func frame_begin_func;
-	M_http2_reader_frame_end_func   frame_end_func;
-	M_http2_reader_goaway_func      goaway_func;
-	M_http2_reader_data_func        data_func;
+	M_http2_reader_frame_begin_func    frame_begin_func;
+	M_http2_reader_frame_end_func      frame_end_func;
+	M_http2_reader_goaway_func         goaway_func;
+	M_http2_reader_data_func           data_func;
+	M_http2_reader_settings_begin_func settings_begin_func;
+	M_http2_reader_settings_end_func   settings_end_func;
+	M_http2_reader_setting_func        setting_func;
+	M_http2_reader_error_func          error_func;
 };
 
 M_API M_http2_reader_t *M_http2_reader_create(struct M_http2_reader_callbacks *cbs, M_uint32 flags, void *thunk);
