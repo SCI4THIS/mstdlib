@@ -74,9 +74,9 @@ void M_http2_encode_string(const char *str, M_buf_t *buf)
 		M_buf_add_byte(buf, 0x80 | byte);
 	} else {
 		M_buf_add_byte(buf, 0xFF);
-		M_http2_encode_number_chain(buf, len - 0x7F);
+		M_http2_encode_number_chain(len - 0x7F, buf);
 	}
-	M_http2_encode_huffman(buf, str, len);
+	M_http2_encode_huffman((M_uint8*)str, len, buf);
 }
 
 M_bool M_http2_encode_framehdr(M_http2_framehdr_t *framehdr, M_buf_t *buf)
@@ -86,12 +86,12 @@ M_bool M_http2_encode_framehdr(M_http2_framehdr_t *framehdr, M_buf_t *buf)
 	data[0] = framehdr->len.u8[2];
 	data[1] = framehdr->len.u8[1];
 	data[2] = framehdr->len.u8[0];
-	data[3] = framehdr->type;
+	data[3] = (M_uint8)framehdr->type;
 	data[4] = framehdr->flags;
-	data[5] = framehdr->stream_id.u8[3] | (framehdr->is_R_set ? 0x80 : 0x00);
-	data[6] = framehdr->stream_id.u8[2];
-	data[7] = framehdr->stream_id.u8[1];
-	data[8] = framehdr->stream_id.u8[0];
+	data[5] = framehdr->stream.id.u8[3] | (framehdr->stream.is_R_set ? 0x80 : 0x00);
+	data[6] = framehdr->stream.id.u8[2];
+	data[7] = framehdr->stream.id.u8[1];
+	data[8] = framehdr->stream.id.u8[0];
 
 	M_buf_add_bytes(buf, data, sizeof(data));
 
@@ -206,7 +206,7 @@ M_bool M_http2_decode_string(M_parser_t *parser, M_buf_t *buf)
 		return M_FALSE;
 
 	if (is_huffman_encoded) {
-		if (!M_http2_decode_huffman(buf, M_parser_peek(parser), len))
+		if (!M_http2_decode_huffman(M_parser_peek(parser), len, buf))
 			return M_FALSE;
 		M_parser_consume(parser, len);
 		return M_TRUE;
@@ -234,18 +234,18 @@ M_bool M_http2_decode_framehdr(M_parser_t *parser, M_http2_framehdr_t *framehdr)
 		return M_FALSE;
 
 	data = M_parser_peek(parser);
-
 	framehdr->len.u8[3]       = 0;
 	framehdr->len.u8[2]       = data[0];
 	framehdr->len.u8[1]       = data[1];
 	framehdr->len.u8[0]       = data[2];
 	framehdr->type            = data[3];
 	framehdr->flags           = data[4];
-	framehdr->is_R_set        = (data[5] & 0x80) != 0;
-	framehdr->stream_id.u8[3] = data[5] & 0x7F;
-	framehdr->stream_id.u8[2] = data[6];
-	framehdr->stream_id.u8[1] = data[7];
-	framehdr->stream_id.u8[0] = data[8];
+	framehdr->stream.is_R_set = (data[5] & 0x80) != 0;
+	framehdr->stream.id.u8[3] = data[5] & 0x7F;
+	framehdr->stream.id.u8[2] = data[6];
+	framehdr->stream.id.u8[1] = data[7];
+	framehdr->stream.id.u8[0] = data[8];
 
 	M_parser_consume(parser, 9);
+	return M_TRUE;
 }

@@ -18,6 +18,8 @@ do {\
 typedef struct {
 	size_t frame_begin_func_call_count;
 	size_t frame_end_func_call_count;
+	size_t goaway_func_call_count;
+	size_t data_func_call_count;
 } args_t;
 
 static M_http2_error_t check_http2_reader_frame_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
@@ -36,9 +38,28 @@ static M_http2_error_t check_http2_reader_frame_end_func(M_http2_framehdr_t *fra
 	return M_HTTP2_ERROR_SUCCESS;
 }
 
+static M_http2_error_t check_http2_reader_goaway_func(M_http2_goaway_t *goaway, void *thunk)
+{
+	(void)goaway;
+	args_t *args = thunk;
+	M_printf("(stream.id=%u,stream.is_R_set=%s,errcode=%u,debug_data=%p,debug_data_len=%zu)\n", goaway->stream.id.u32, goaway->stream.is_R_set ? "M_TRUE" : "M_FALSE", goaway->errcode.u32, goaway->debug_data, goaway->debug_data_len);
+	args->goaway_func_call_count++;
+	return M_HTTP2_ERROR_SUCCESS;
+}
+
+static M_http2_error_t check_http2_reader_data_func(M_http2_data_t *data, void *thunk)
+{
+	(void)data;
+	args_t *args = thunk;
+	args->data_func_call_count++;
+	return M_HTTP2_ERROR_SUCCESS;
+}
+
 struct M_http2_reader_callbacks test_cbs = {
 	check_http2_reader_frame_begin_func,
 	check_http2_reader_frame_end_func,
+	check_http2_reader_goaway_func,
+	check_http2_reader_data_func,
 };
 
 
@@ -61,15 +82,32 @@ static const M_uint8 test_goaway_frame[] = {
 	0x00
 };
 
+static const M_uint8 test_data_frame[] = {
+	0x00, 0x00, 0x57, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x0a, 0x3c, 0x21, 0x44, 0x4f, 0x43, 0x54,
+	0x59, 0x50, 0x45, 0x20, 0x68, 0x74, 0x6d, 0x6c, 0x3e, 0x0a, 0x3c, 0x21, 0x2d, 0x2d, 0x5b, 0x69,
+	0x66, 0x20, 0x49, 0x45, 0x4d, 0x6f, 0x62, 0x69, 0x6c, 0x65, 0x20, 0x37, 0x20, 0x5d, 0x3e, 0x3c,
+	0x68, 0x74, 0x6d, 0x6c, 0x20, 0x63, 0x6c, 0x61, 0x73, 0x73, 0x3d, 0x22, 0x6e, 0x6f, 0x2d, 0x6a,
+	0x73, 0x20, 0x69, 0x65, 0x6d, 0x37, 0x22, 0x3e, 0x3c, 0x21, 0x5b, 0x65, 0x6e, 0x64, 0x69, 0x66,
+	0x5d, 0x2d, 0x2d, 0x3e, 0x0a, 0x3c, 0x21, 0x2d, 0x2d, 0x5b, 0x69, 0x66, 0x20, 0x6c, 0x74, 0x20,
+};
+
 START_TEST(check_http2_frame_funcs)
 {
 	args_t            args = { 0 };
 	size_t            len;
 	M_http2_reader_t *h2r  = M_http2_reader_create(&test_cbs, M_HTTP2_READER_NONE, &args);
+
 	M_http2_reader_read(h2r, test_goaway_frame, sizeof(test_goaway_frame), &len);
 	ck_assert_msg(len == sizeof(test_goaway_frame), "Should have read '%zu' not '%zu'", sizeof(test_goaway_frame), len);
 	ck_assert_msg(args.frame_begin_func_call_count == 1, "Should have called begin_func once");
 	ck_assert_msg(args.frame_end_func_call_count == 1, "Should have called end_func once");
+	ck_assert_msg(args.goaway_func_call_count == 1, "Should have called goaway_func once");
+
+	M_http2_reader_read(h2r, test_data_frame, sizeof(test_data_frame), &len);
+	ck_assert_msg(len == sizeof(test_data_frame), "Should have read '%zu' not '%zu'", sizeof(test_goaway_frame), len);
+	ck_assert_msg(args.frame_begin_func_call_count == 2, "Should have called begin_func once");
+	ck_assert_msg(args.frame_end_func_call_count == 2, "Should have called end_func once");
+	ck_assert_msg(args.data_func_call_count == 1, "Should have called data_func once");
 	M_http2_reader_destroy(h2r);
 }
 END_TEST
