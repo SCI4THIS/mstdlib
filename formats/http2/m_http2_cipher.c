@@ -161,7 +161,7 @@ M_bool M_http2_decode_number_chain(M_parser_t *parser, M_uint64 *num)
 	*num = 0;
 
 	do {
-		if (!M_parser_peek_byte(parser, &byte))
+		if (!M_parser_read_byte(parser, &byte))
 			return M_FALSE;
 		*num = (*num << 7) | (byte & 0x7F);
 	} while((byte & 0x80) != 0);
@@ -174,10 +174,9 @@ M_bool M_http2_decode_string_length(M_parser_t *parser, M_uint64 *len, M_bool *i
 	static const M_uint8 mask = 0x7F;
 	M_uint8              byte;
 
-	if (!M_parser_peek_byte(parser, &byte))
+	if (!M_parser_read_byte(parser, &byte))
 		return M_FALSE;
 
-	M_parser_consume(parser, 1);
 	*is_huffman_encoded = (byte & 0x80) != 0;
 
 	byte = byte & mask;
@@ -196,8 +195,8 @@ M_bool M_http2_decode_string_length(M_parser_t *parser, M_uint64 *len, M_bool *i
 
 M_bool M_http2_decode_string(M_parser_t *parser, M_buf_t *buf)
 {
-	M_bool   is_huffman_encoded;
-	M_uint64 len;
+	M_bool   is_huffman_encoded = M_FALSE;
+	M_uint64 len                = 0;
 
 	if (!M_http2_decode_string_length(parser, &len, &is_huffman_encoded))
 		return M_FALSE;

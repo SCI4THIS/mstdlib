@@ -25,6 +25,7 @@ typedef struct {
 	size_t setting_func_call_count;
 	size_t headers_begin_func_call_count;
 	size_t headers_end_func_call_count;
+	size_t header_priority_func_call_count;
 	size_t header_func_call_count;
 } args_t;
 
@@ -93,6 +94,38 @@ static void check_http2_reader_error_func(M_http2_error_t errcode, const char *e
 	M_printf("ERROR: (%d) \"%s\"\n", errcode, errmsg);
 }
 
+static M_http2_error_t check_http2_reader_headers_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
+{
+	(void)framehdr;
+	args_t *args = thunk;
+	args->headers_begin_func_call_count++;
+	return M_HTTP2_ERROR_SUCCESS;
+}
+
+static M_http2_error_t check_http2_reader_headers_end_func(M_http2_framehdr_t *framehdr, void *thunk)
+{
+	(void)framehdr;
+	args_t *args = thunk;
+	args->headers_end_func_call_count++;
+	return M_HTTP2_ERROR_SUCCESS;
+}
+
+static M_http2_error_t check_http2_reader_header_priority_func(M_http2_header_priority_t *priority, void *thunk)
+{
+	(void)priority;
+	args_t *args = thunk;
+	args->header_priority_func_call_count++;
+	return M_HTTP2_ERROR_SUCCESS;
+}
+
+static M_http2_error_t check_http2_reader_header_func(M_http2_header_t *header, void *thunk)
+{
+	args_t *args = thunk;
+	M_printf("HEADER \"%s\": \"%s\"\n", header->key, header->value);
+	args->header_func_call_count++;
+	return M_HTTP2_ERROR_SUCCESS;
+}
+
 struct M_http2_reader_callbacks test_cbs = {
 	check_http2_reader_frame_begin_func,
 	check_http2_reader_frame_end_func,
@@ -102,6 +135,10 @@ struct M_http2_reader_callbacks test_cbs = {
 	check_http2_reader_settings_end_func,
 	check_http2_reader_setting_func,
 	check_http2_reader_error_func,
+	check_http2_reader_headers_begin_func,
+	check_http2_reader_headers_end_func,
+	check_http2_reader_header_priority_func,
+	check_http2_reader_header_func,
 };
 
 
