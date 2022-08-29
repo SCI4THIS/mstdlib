@@ -27,6 +27,7 @@ typedef struct {
 	size_t headers_end_func_call_count;
 	size_t header_priority_func_call_count;
 	size_t header_func_call_count;
+	size_t pri_str_func_call_count;
 } args_t;
 
 static M_http2_error_t check_http2_reader_frame_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
@@ -126,6 +127,13 @@ static M_http2_error_t check_http2_reader_header_func(M_http2_header_t *header, 
 	return M_HTTP2_ERROR_SUCCESS;
 }
 
+static M_http2_error_t check_http2_pri_str_func(void *thunk)
+{
+	args_t *args = thunk;
+	args->pri_str_func_call_count++;
+	return M_HTTP2_ERROR_SUCCESS;
+}
+
 struct M_http2_reader_callbacks test_cbs = {
 	check_http2_reader_frame_begin_func,
 	check_http2_reader_frame_end_func,
@@ -139,6 +147,7 @@ struct M_http2_reader_callbacks test_cbs = {
 	check_http2_reader_headers_end_func,
 	check_http2_reader_header_priority_func,
 	check_http2_reader_header_func,
+	check_http2_pri_str_func,
 };
 
 
@@ -193,6 +202,8 @@ static const M_uint8 test_headers_frame[] = {
 	0xaa, 0xca, 0xb1, 0xeb, 0x49, 0x8f, 0x52, 0x3f, 0x85, 0xa8, 0xe8, 0xa8, 0xd2, 0xcb,
 };
 
+static const char *test_pri_str = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
 START_TEST(check_http2_frame_funcs)
 {
 	args_t            args = { 0 };
@@ -225,6 +236,10 @@ START_TEST(check_http2_frame_funcs)
 	ck_assert_msg(args.frame_end_func_call_count == 4, "Should have called frame_end_func 4 times");
 	ck_assert_msg(args.headers_begin_func_call_count == 1, "Should have called headers_begin_func once");
 	ck_assert_msg(args.headers_end_func_call_count == 1, "Should have called headers_end_func once");
+
+	M_http2_reader_read(h2r, (M_uint8*)test_pri_str, M_str_len(test_pri_str), &len);
+	ck_assert_msg(len == M_str_len(test_pri_str), "Should have read '%zu' not '%zu'", M_str_len(test_pri_str), len);
+	ck_assert_msg(args.pri_str_func_call_count == 1, "Should have called pri_str_func once");
 
 	M_http2_reader_destroy(h2r);
 }

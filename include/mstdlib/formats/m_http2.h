@@ -196,6 +196,7 @@ typedef M_http2_error_t (*M_http2_reader_headers_begin_func)(M_http2_framehdr_t 
 typedef M_http2_error_t (*M_http2_reader_headers_end_func)(M_http2_framehdr_t *framehdr, void *thunk);
 typedef M_http2_error_t (*M_http2_reader_header_priority_func)(M_http2_header_priority_t *priority, void *thunk);
 typedef M_http2_error_t (*M_http2_reader_header_func)(M_http2_header_t *header, void *thunk);
+typedef M_http2_error_t (*M_http2_reader_pri_str_func)(void *thunk);
 
 /*! Callbacks for various stages of parsing. */
 struct M_http2_reader_callbacks {
@@ -211,6 +212,7 @@ struct M_http2_reader_callbacks {
 	M_http2_reader_headers_end_func     headers_end_func;
 	M_http2_reader_header_priority_func header_priority_func;
 	M_http2_reader_header_func          header_func;
+	M_http2_reader_pri_str_func         pri_str_func;
 };
 
 M_API M_http2_reader_t *M_http2_reader_create(struct M_http2_reader_callbacks *cbs, M_uint32 flags, void *thunk);

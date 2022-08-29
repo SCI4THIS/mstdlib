@@ -90,6 +90,12 @@ static M_http2_error_t M_http2_reader_header_func_default(M_http2_header_t *head
 	return M_HTTP2_ERROR_SUCCESS;
 }
 
+static M_http2_error_t M_http2_reader_pri_str_func_default(void *thunk)
+{
+	(void)thunk;
+	return M_HTTP2_ERROR_SUCCESS;
+}
+
 M_http2_reader_t *M_http2_reader_create(struct M_http2_reader_callbacks *cbs, M_uint32 flags, void *thunk)
 {
 	const struct M_http2_reader_callbacks default_cbs = {
@@ -105,6 +111,7 @@ M_http2_reader_t *M_http2_reader_create(struct M_http2_reader_callbacks *cbs, M_
 		M_http2_reader_headers_end_func_default,
 		M_http2_reader_header_priority_func_default,
 		M_http2_reader_header_func_default,
+		M_http2_reader_pri_str_func_default,
 	};
 
 	M_http2_reader_t *h2r = M_malloc_zero(sizeof(*h2r));
@@ -124,6 +131,7 @@ M_http2_reader_t *M_http2_reader_create(struct M_http2_reader_callbacks *cbs, M_
 		h2r->cbs.headers_end_func    = cbs->headers_end_func    ? cbs->headers_end_func    : default_cbs.headers_end_func;
 		h2r->cbs.header_priority_func= cbs->header_priority_func? cbs->header_priority_func: default_cbs.header_priority_func;
 		h2r->cbs.header_func         = cbs->header_func         ? cbs->header_func         : default_cbs.header_func;
+		h2r->cbs.pri_str_func        = cbs->pri_str_func        ? cbs->pri_str_func        : default_cbs.pri_str_func;
 	}
 
 	h2r->flags = flags;
@@ -529,6 +537,7 @@ static M_http2_error_t M_http2_reader_read_goaway(M_http2_reader_t *h2r, M_http2
 
 M_http2_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *data, size_t data_len, size_t *len_read)
 {
+	static const char  *pri_str      = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 	M_http2_error_t     res          = M_HTTP2_ERROR_INVALIDUSE;
 	size_t              internal_len;
 	M_http2_framehdr_t  framehdr;
@@ -543,6 +552,16 @@ M_http2_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *
 	*len_read = 0;
 
 	parser = M_parser_create_const(data, data_len, M_PARSER_SPLIT_FLAG_NONE);
+
+	if (data_len >= M_str_len(pri_str)) {
+		if (M_mem_eq(data, pri_str, M_str_len(pri_str))) {
+			res = h2r->cbs.pri_str_func(h2r->thunk);
+			if (res != M_HTTP2_ERROR_SUCCESS)
+				goto done;
+			M_parser_consume(parser, M_str_len(pri_str));
+		}
+	}
+
 	while (M_http2_decode_framehdr(parser, &framehdr)) {
 		if (!M_http2_frame_type_is_valid(framehdr.type)) {
 			res = M_HTTP2_ERROR_INVALID_FRAME_TYPE;
@@ -558,18 +577,20 @@ M_http2_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *
 			case M_HTTP2_FRAME_TYPE_HEADERS:
 				res = M_http2_reader_read_headers(h2r, &framehdr, parser);
 				break;
-			case M_HTTP2_FRAME_TYPE_PRIORITY:
-			case M_HTTP2_FRAME_TYPE_RST_STREAM:
 			case M_HTTP2_FRAME_TYPE_SETTINGS:
 				res = M_http2_reader_read_settings(h2r, &framehdr, parser);
 				break;
-			case M_HTTP2_FRAME_TYPE_PUSH_PROMISE:
-			case M_HTTP2_FRAME_TYPE_PING:
 			case M_HTTP2_FRAME_TYPE_GOAWAY:
 				res = M_http2_reader_read_goaway(h2r, &framehdr, parser);
 				break;
+			case M_HTTP2_FRAME_TYPE_PUSH_PROMISE:
+			case M_HTTP2_FRAME_TYPE_PING:
+			case M_HTTP2_FRAME_TYPE_PRIORITY:
+			case M_HTTP2_FRAME_TYPE_RST_STREAM:
 			case M_HTTP2_FRAME_TYPE_WINDOW_UPDATE:
 			case M_HTTP2_FRAME_TYPE_CONTINUATION:
+				M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Unsupported frame type: %u\n", framehdr.type);
+				res = M_HTTP2_ERROR_UNSUPPORTED;
 				break;
 		}
 		if (res != M_HTTP2_ERROR_SUCCESS)
@@ -585,14 +606,4 @@ done:
 		h2r->cbs.error_func(res, h2r->errmsg);
 	}
 	return res;
-}
-
-M_http_error_t M_http2_http_reader_read(M_http_reader_t *httpr, const unsigned char *data, size_t data_len, size_t *len_read)
-{
-	(void)httpr;
-	(void)data;
-	(void)data_len;
-	(void)len_read;
-	/* Not yet implemented */
-	return M_HTTP_ERROR_INVALIDUSE;
 }
