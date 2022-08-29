@@ -99,17 +99,13 @@ typedef struct {
 	M_http2_stream_t     stream;
 } M_http2_framehdr_t;
 
-
-void              M_http2_encode_header(M_buf_t *buf, const char *key, const char *value);
-size_t            M_http2_decode_header(const M_uint8* data, size_t data_len, M_http_reader_header_full_func entry_cb, void *thunk);
-void              M_http2_headers_frame_decode(const M_uint8* data, size_t data_len, M_http_reader_header_full_func entry_cb, void *thunk);
-void              M_http2_data_frame_decode(const M_uint8* data, size_t data_len, M_http_reader_body_func entry_cb, void *thunk);
-
+M_bool  M_http2_static_table_lookup(size_t idx, const char **key, const char **val);
 
 M_bool  M_http2_encode_huffman(const M_uint8 *data, size_t data_len, M_buf_t *buf);
 void    M_http2_encode_number_chain(M_uint64 num, M_buf_t *buf);
 void    M_http2_encode_string(const char *str, M_buf_t *buf);
 M_bool  M_http2_encode_framehdr(M_http2_framehdr_t *framehdr, M_buf_t *buf);
+void    M_http2_encode_header(const char *key, const char *value, M_buf_t *buf);
 
 M_bool  M_http2_decode_huffman(const M_uint8 *data, size_t data_len, M_buf_t *buf);
 M_bool  M_http2_decode_number_chain(M_parser_t *parser, M_uint64 *num);

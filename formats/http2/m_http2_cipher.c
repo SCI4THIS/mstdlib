@@ -1,6 +1,27 @@
 #include <mstdlib/mstdlib.h>
 #include <mstdlib/formats/m_http2.h>
 
+#include "generated/m_http2_static_header_table.c"
+/* m_http2_static_header_table.c initializes the following struct:
+ * static struct {
+ * 	const char *key;
+ * 	const char *value;
+ * } M_http2_header_table[];
+ */
+M_bool M_http2_static_table_lookup(size_t idx, const char **key, const char **val)
+{
+	*key = NULL;
+	*val = NULL;
+
+	if (idx == 0 || idx >= (sizeof(M_http2_header_table) / sizeof(M_http2_header_table[0])))
+		return M_FALSE;
+
+	*key = M_http2_header_table[idx].key;
+	*val = M_http2_header_table[idx].value;
+	return M_TRUE;
+}
+
+
 #include "generated/m_http2_huffman_generated_encode.c"
 /* Defines the following struct
  * struct {
@@ -67,8 +88,12 @@ void M_http2_encode_number_chain(M_uint64 num, M_buf_t *buf)
 
 void M_http2_encode_string(const char *str, M_buf_t *buf)
 {
-	size_t len = M_str_len(str);
-	M_uint8 byte;
+	M_buf_t *encode_buf = M_buf_create();
+	M_uint8  byte;
+	size_t   len;
+
+	M_http2_encode_huffman((M_uint8*)str, M_str_len(str), encode_buf);
+	len = M_buf_len(encode_buf);
 	if (len < 0x7F) {
 		byte = len & 0x7F;
 		M_buf_add_byte(buf, 0x80 | byte);
@@ -76,7 +101,8 @@ void M_http2_encode_string(const char *str, M_buf_t *buf)
 		M_buf_add_byte(buf, 0xFF);
 		M_http2_encode_number_chain(len - 0x7F, buf);
 	}
-	M_http2_encode_huffman((M_uint8*)str, len, buf);
+	M_buf_add_bytes(buf, M_buf_peek(encode_buf), len);
+	M_buf_cancel(encode_buf);
 }
 
 M_bool M_http2_encode_framehdr(M_http2_framehdr_t *framehdr, M_buf_t *buf)
@@ -96,6 +122,33 @@ M_bool M_http2_encode_framehdr(M_http2_framehdr_t *framehdr, M_buf_t *buf)
 	M_buf_add_bytes(buf, data, sizeof(data));
 
 	return M_TRUE;
+}
+
+void M_http2_encode_header(const char *key, const char *val, M_buf_t *buf)
+{
+	M_uint8 idx;
+	for (idx=1; idx<(sizeof(M_http2_header_table)/sizeof(M_http2_header_table[0])); idx++) {
+		if (M_str_eq(M_http2_header_table[idx].key, key)) {
+			if (M_str_eq(M_http2_header_table[idx].value, val)) {
+				M_uint8 byte = 0x80 | idx;
+				M_buf_add_byte(buf, byte);
+				return;
+			}
+			if (M_http2_header_table[idx].value == NULL) {
+				if (idx < 0x0F) {
+					M_buf_add_byte(buf, idx);
+				} else {
+					M_buf_add_byte(buf, 0x0F);
+					M_http2_encode_number_chain(idx - 0x0F, buf);
+				}
+				M_http2_encode_string(val, buf);
+				return;
+			}
+		}
+	}
+	M_buf_add_byte(buf, 0x00);
+	M_http2_encode_string(key, buf);
+	M_http2_encode_string(val, buf);
 }
 
 /* Decoding */

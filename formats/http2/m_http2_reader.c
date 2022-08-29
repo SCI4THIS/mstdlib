@@ -265,13 +265,6 @@ static M_http2_error_t M_http2_reader_read_header_string(M_parser_t *parser, cha
 	return M_HTTP2_ERROR_SUCCESS;
 }
 
-#include "generated/m_http2_static_header_table.c"
-/* m_http2_static_header_table.c initializes the following struct:
-	* static struct {
-	* 	const char *key;
-	* 	const char *value;
- * } M_http2_header_table[];
- */
 
 static M_http2_error_t M_http2_header_table_lookup(M_http2_reader_t *h2r, size_t idx, M_http2_header_t *header)
 {
@@ -280,12 +273,8 @@ static M_http2_error_t M_http2_header_table_lookup(M_http2_reader_t *h2r, size_t
 		return M_HTTP2_ERROR_INVALID_TABLE_INDEX;
 	}
 
-	if (idx < sizeof(M_http2_header_table) / sizeof(M_http2_header_table[0])) {
-		/* static table */
-		header->key = M_http2_header_table[idx].key;
-		header->value = M_http2_header_table[idx].value;
+	if (M_http2_static_table_lookup(idx, &header->key, &header->value))
 		return M_HTTP2_ERROR_SUCCESS;
-	}
 
 	return M_HTTP2_ERROR_INVALID_TABLE_INDEX;
 }
