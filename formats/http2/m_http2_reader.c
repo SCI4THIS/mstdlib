@@ -8,92 +8,92 @@ struct M_http2_reader {
 	char                             errmsg[256];
 };
 
-static M_http2_error_t M_http2_reader_frame_begin_func_default(M_http2_framehdr_t *framehdr, void *thunk)
+static M_http_error_t M_http2_reader_frame_begin_func_default(M_http2_framehdr_t *framehdr, void *thunk)
 {
 	(void)framehdr;
 	(void)thunk;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t M_http2_reader_frame_end_func_default(M_http2_framehdr_t *framehdr, void *thunk)
+static M_http_error_t M_http2_reader_frame_end_func_default(M_http2_framehdr_t *framehdr, void *thunk)
 {
 	(void)framehdr;
 	(void)thunk;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t M_http2_reader_goaway_func_default(M_http2_goaway_t *goaway, void *thunk)
+static M_http_error_t M_http2_reader_goaway_func_default(M_http2_goaway_t *goaway, void *thunk)
 {
 	(void)goaway;
 	(void)thunk;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t M_http2_reader_data_func_default(M_http2_data_t *data, void *thunk)
+static M_http_error_t M_http2_reader_data_func_default(M_http2_data_t *data, void *thunk)
 {
 	(void)data;
 	(void)thunk;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t M_http2_reader_settings_begin_func_default(M_http2_framehdr_t *framehdr, void *thunk)
+static M_http_error_t M_http2_reader_settings_begin_func_default(M_http2_framehdr_t *framehdr, void *thunk)
 {
 	(void)framehdr;
 	(void)thunk;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t M_http2_reader_settings_end_func_default(M_http2_framehdr_t *framehdr, void *thunk)
+static M_http_error_t M_http2_reader_settings_end_func_default(M_http2_framehdr_t *framehdr, void *thunk)
 {
 	(void)framehdr;
 	(void)thunk;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t M_http2_reader_setting_func_default(M_http2_setting_t *setting, void *thunk)
+static M_http_error_t M_http2_reader_setting_func_default(M_http2_setting_t *setting, void *thunk)
 {
 	(void)setting;
 	(void)thunk;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static void M_http2_reader_error_func_default(M_http2_error_t errcode, const char *errmsg)
+static void M_http2_reader_error_func_default(M_http_error_t errcode, const char *errmsg)
 {
 	(void)errcode;
 	(void)errmsg;
 }
 
-static M_http2_error_t M_http2_reader_headers_begin_func_default(M_http2_framehdr_t *framehdr, void *thunk)
+static M_http_error_t M_http2_reader_headers_begin_func_default(M_http2_framehdr_t *framehdr, void *thunk)
 {
 	(void)framehdr;
 	(void)thunk;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t M_http2_reader_headers_end_func_default(M_http2_framehdr_t *framehdr, void *thunk)
+static M_http_error_t M_http2_reader_headers_end_func_default(M_http2_framehdr_t *framehdr, void *thunk)
 {
 	(void)framehdr;
 	(void)thunk;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t M_http2_reader_header_priority_func_default(M_http2_header_priority_t *priority, void *thunk)
+static M_http_error_t M_http2_reader_header_priority_func_default(M_http2_header_priority_t *priority, void *thunk)
 {
 	(void)priority;
 	(void)thunk;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
-static M_http2_error_t M_http2_reader_header_func_default(M_http2_header_t *header, void *thunk)
+static M_http_error_t M_http2_reader_header_func_default(M_http2_header_t *header, void *thunk)
 {
 	(void)header;
 	(void)thunk;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t M_http2_reader_pri_str_func_default(void *thunk)
+static M_http_error_t M_http2_reader_pri_str_func_default(void *thunk)
 {
 	(void)thunk;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
 M_http2_reader_t *M_http2_reader_create(const struct M_http2_reader_callbacks *cbs, M_uint32 flags, void *thunk)
@@ -185,10 +185,10 @@ static M_bool M_parser_read_stream(M_parser_t *parser, M_http2_stream_t *stream)
 	return M_parser_read_bytes_ntoh(parser, stream->id.u8, 3);
 }
 
-static M_http2_error_t M_http2_reader_read_data(M_http2_reader_t *h2r, M_http2_framehdr_t *framehdr, M_parser_t *parser)
+static M_http_error_t M_http2_reader_read_data(M_http2_reader_t *h2r, M_http2_framehdr_t *framehdr, M_parser_t *parser)
 {
 	M_http2_data_t  data      = { 0 };
-	M_http2_error_t errcode   = M_HTTP2_ERROR_SUCCESS;
+	M_http_error_t  errcode   = M_HTTP_ERROR_SUCCESS;
 	M_bool          is_padded = (framehdr->flags & 0x8) != 0;
 
 	data.framehdr = framehdr;
@@ -246,67 +246,67 @@ static M_http2_header_type_t M_http2_header_type(M_uint8 byte)
 	return M_HTTP2_HT_RFC7541_6_3_DYNAMIC_TABLE;
 }
 
-static M_http2_error_t M_http2_reader_read_header_number(M_parser_t *parser, M_uint64 *num, size_t *len)
+static M_http_error_t M_http2_reader_read_header_number(M_parser_t *parser, M_uint64 *num, size_t *len)
 {
 	size_t parser_len = M_parser_len(parser);
 	if (!M_http2_decode_number_chain(parser, num))
-		return M_HTTP2_ERROR_INTERNAL;
+		return M_HTTP_ERROR_INTERNAL;
 	*len -= (parser_len - M_parser_len(parser));
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t M_http2_reader_read_header_string(M_parser_t *parser, char **str, size_t *len)
+static M_http_error_t M_http2_reader_read_header_string(M_parser_t *parser, char **str, size_t *len)
 {
 	size_t parser_len = M_parser_len(parser);
 	*str = M_http2_decode_string_alloc(parser);
 	if (*str == NULL)
-		return M_HTTP2_ERROR_INTERNAL;
+		return M_HTTP_ERROR_INTERNAL;
 	*len -= (parser_len - M_parser_len(parser));
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
 
-static M_http2_error_t M_http2_header_table_lookup(M_http2_reader_t *h2r, size_t idx, M_http2_header_t *header)
+static M_http_error_t M_http2_header_table_lookup(M_http2_reader_t *h2r, size_t idx, M_http2_header_t *header)
 {
 	if (idx == 0) {
 		M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Table index must be > 0");
-		return M_HTTP2_ERROR_INVALID_TABLE_INDEX;
+		return M_HTTP_ERROR_INVALID_TABLE_INDEX;
 	}
 
 	if (M_http2_static_table_lookup(idx, &header->key, &header->value))
-		return M_HTTP2_ERROR_SUCCESS;
+		return M_HTTP_ERROR_SUCCESS;
 
-	return M_HTTP2_ERROR_INVALID_TABLE_INDEX;
+	return M_HTTP_ERROR_INVALID_TABLE_INDEX;
 }
 
-static M_http2_error_t M_http2_header_dynamic_table_entry(M_http2_reader_t *h2r, const char *key, const char *value)
+static M_http_error_t M_http2_header_dynamic_table_entry(M_http2_reader_t *h2r, const char *key, const char *value)
 {
 	(void)key;
 	(void)value;
 	M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Unsupported dynamic table entries");
-	return M_HTTP2_ERROR_UNSUPPORTED;
+	return M_HTTP_ERROR_UNSUPPORTED_DATA;
 }
 
-static M_http2_error_t M_http2_header_dynamic_table_size(M_http2_reader_t *h2r, size_t table_size)
+static M_http_error_t M_http2_header_dynamic_table_size(M_http2_reader_t *h2r, size_t table_size)
 {
 	if (table_size == 0) {
-		return M_HTTP2_ERROR_SUCCESS;
+		return M_HTTP_ERROR_SUCCESS;
 	}
 	M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Unsupported dynamic table size > 0");
-	return M_HTTP2_ERROR_UNSUPPORTED;
+	return M_HTTP_ERROR_UNSUPPORTED_DATA;
 }
 
-static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http2_framehdr_t *framehdr, M_parser_t *parser)
+static M_http_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http2_framehdr_t *framehdr, M_parser_t *parser)
 {
 	size_t           len;
 	M_http2_header_t header;
-	M_http2_error_t  errcode        = M_HTTP2_ERROR_SUCCESS;
+	M_http_error_t   errcode        = M_HTTP_ERROR_SUCCESS;
 	M_bool           is_padded      = framehdr->flags & 0x8;
 	M_bool           is_prioritized = framehdr->flags & 0x20;
 	M_uint8          pad_len        = 0;
 
 	errcode = h2r->cbs.headers_begin_func(framehdr, h2r->thunk);
-	if (errcode != M_HTTP2_ERROR_SUCCESS)
+	if (errcode != M_HTTP_ERROR_SUCCESS)
 		return errcode;
 
 	len = framehdr->len.u32;
@@ -314,7 +314,7 @@ static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http
 	if (is_padded) {
 		if (!M_parser_read_byte(parser, &pad_len)) {
 			M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Failed reading 1 byte into pad length.");
-			return M_HTTP2_ERROR_INTERNAL;
+			return M_HTTP_ERROR_INTERNAL;
 		}
 		len--;
 	}
@@ -324,14 +324,14 @@ static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http
 		priority.framehdr = framehdr;
 		if (!M_parser_read_stream(parser, &priority.stream)) {
 			M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Failed reading 4 bytes into priority stream.");
-			return M_HTTP2_ERROR_INTERNAL;
+			return M_HTTP_ERROR_INTERNAL;
 		}
 		if (!M_parser_read_byte(parser, &priority.weight)) {
 			M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Failed reading 1 byte into priority weight");
-			return M_HTTP2_ERROR_INTERNAL;
+			return M_HTTP_ERROR_INTERNAL;
 		}
 		errcode = h2r->cbs.header_priority_func(&priority, h2r->thunk);
-		if (errcode != M_HTTP2_ERROR_SUCCESS)
+		if (errcode != M_HTTP_ERROR_SUCCESS)
 			return errcode;
 		len -= 5;
 	}
@@ -349,7 +349,7 @@ static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http
 
 		if (!M_parser_read_byte(parser, &byte)) {
 			M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Failed reading 1 byte into next header entry");
-			return M_HTTP2_ERROR_INTERNAL;
+			return M_HTTP_ERROR_INTERNAL;
 		}
 		len--;
 		type = M_http2_header_type(byte);
@@ -359,7 +359,7 @@ static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http
 				if (byte == 0x7F) {
 					M_uint64 num;
 					errcode = M_http2_reader_read_header_number(parser, &num, &len);
-					if (errcode != M_HTTP2_ERROR_SUCCESS) {
+					if (errcode != M_HTTP_ERROR_SUCCESS) {
 						M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Failed to read number chain (header type 6.1)");
 						return errcode;
 					}
@@ -368,7 +368,7 @@ static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http
 					idx = byte;
 				}
 				errcode = M_http2_header_table_lookup(h2r, idx, &header);
-				if (errcode != M_HTTP2_ERROR_SUCCESS)
+				if (errcode != M_HTTP_ERROR_SUCCESS)
 					return errcode;
 				h2r->cbs.header_func(&header, h2r->thunk);
 				break;
@@ -376,10 +376,10 @@ static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http
 			case M_HTTP2_HT_RFC7541_6_2_2_2_KEY_VAL:
 			case M_HTTP2_HT_RFC7541_6_2_3_2_KEY_VAL:
 				errcode = M_http2_reader_read_header_string(parser, &key, &len);
-				if (errcode != M_HTTP2_ERROR_SUCCESS)
+				if (errcode != M_HTTP_ERROR_SUCCESS)
 					return errcode;
 				errcode = M_http2_reader_read_header_string(parser, &value, &len);
-				if (errcode != M_HTTP2_ERROR_SUCCESS) {
+				if (errcode != M_HTTP_ERROR_SUCCESS) {
 					M_free(key);
 					M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Failed reading header value");
 					return errcode;
@@ -394,7 +394,7 @@ static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http
 				M_free(value);
 				key   = NULL;
 				value = NULL;
-				if (errcode != M_HTTP2_ERROR_SUCCESS)
+				if (errcode != M_HTTP_ERROR_SUCCESS)
 					return errcode;
 				break;
 			case M_HTTP2_HT_RFC7541_6_2_1_1_VAL:
@@ -407,7 +407,7 @@ static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http
 				if (byte == mask) {
 					M_uint64 num;
 					errcode = M_http2_reader_read_header_number(parser, &num, &len);
-					if (errcode != M_HTTP2_ERROR_SUCCESS) {
+					if (errcode != M_HTTP_ERROR_SUCCESS) {
 						M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Failed to read number chain (header type 6.2)");
 						return errcode;
 					}
@@ -416,10 +416,10 @@ static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http
 					idx = byte;
 				}
 				errcode = M_http2_header_table_lookup(h2r, idx, &header);
-				if (errcode != M_HTTP2_ERROR_SUCCESS)
+				if (errcode != M_HTTP_ERROR_SUCCESS)
 					return errcode;
 				errcode = M_http2_reader_read_header_string(parser, &value, &len);
-				if (errcode != M_HTTP2_ERROR_SUCCESS)
+				if (errcode != M_HTTP_ERROR_SUCCESS)
 					return errcode;
 				header.value = value;
 				h2r->cbs.header_func(&header, h2r->thunk);
@@ -427,7 +427,7 @@ static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http
 					errcode = M_http2_header_dynamic_table_entry(h2r, header.key, header.value);
 				M_free(value);
 				value = NULL;
-				if (errcode != M_HTTP2_ERROR_SUCCESS)
+				if (errcode != M_HTTP_ERROR_SUCCESS)
 					return errcode;
 				break;
 			case M_HTTP2_HT_RFC7541_6_3_DYNAMIC_TABLE:
@@ -435,7 +435,7 @@ static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http
 				if (byte == 0x1F) {
 					M_uint64 num;
 					errcode = M_http2_reader_read_header_number(parser, &num, &len);
-					if (errcode != M_HTTP2_ERROR_SUCCESS) {
+					if (errcode != M_HTTP_ERROR_SUCCESS) {
 						M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Failed to read number chain (header type 6.3)");
 						return errcode;
 					}
@@ -444,7 +444,7 @@ static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http
 					table_size = byte & 0x1F;
 				}
 				errcode = M_http2_header_dynamic_table_size(h2r, table_size);
-				if (errcode != M_HTTP2_ERROR_SUCCESS)
+				if (errcode != M_HTTP_ERROR_SUCCESS)
 					return errcode;
 				break;
 		}
@@ -453,34 +453,34 @@ static M_http2_error_t M_http2_reader_read_headers(M_http2_reader_t *h2r, M_http
 	return h2r->cbs.headers_end_func(framehdr, h2r->thunk);
 }
 
-static M_http2_error_t M_http2_reader_read_settings(M_http2_reader_t *h2r, M_http2_framehdr_t *framehdr, M_parser_t *parser)
+static M_http_error_t M_http2_reader_read_settings(M_http2_reader_t *h2r, M_http2_framehdr_t *framehdr, M_parser_t *parser)
 {
 	size_t            len;
 	M_union_u16_u8    setting_type;
 	M_http2_setting_t setting;
-	M_http2_error_t   errcode = M_HTTP2_ERROR_SUCCESS;
+	M_http_error_t    errcode = M_HTTP_ERROR_SUCCESS;
 
 	errcode = h2r->cbs.settings_begin_func(framehdr, h2r->thunk);
-	if (errcode != M_HTTP2_ERROR_SUCCESS)
+	if (errcode != M_HTTP_ERROR_SUCCESS)
 		return errcode;
 
 	len = framehdr->len.u32;
 	while (len >= 6) {
 		if (!M_parser_read_bytes_ntoh(parser, setting_type.u8, 2)) {
 			M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "read settings type failed reading next 2 bytes");
-			return M_HTTP2_ERROR_INTERNAL;
+			return M_HTTP_ERROR_INTERNAL;
 		}
 		setting.type = (M_http2_setting_type_t)setting_type.u16;
 		if (!M_http2_setting_is_valid(setting.type)) {
 			M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Invalid setting type: %d", setting.type);
-			return M_HTTP2_ERROR_INVALID_SETTING_TYPE;
+			return M_HTTP_ERROR_INVALID_SETTING_TYPE;
 		}
 		if (!M_parser_read_bytes_ntoh(parser, setting.value.u8, 4)) {
 			M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "read settings value failed reading next 4 bytes");
-			return M_HTTP2_ERROR_INTERNAL;
+			return M_HTTP_ERROR_INTERNAL;
 		}
 		errcode = h2r->cbs.setting_func(&setting, h2r->thunk);
-		if (errcode != M_HTTP2_ERROR_SUCCESS)
+		if (errcode != M_HTTP_ERROR_SUCCESS)
 			return errcode;
 
 		len -= 6;
@@ -488,27 +488,27 @@ static M_http2_error_t M_http2_reader_read_settings(M_http2_reader_t *h2r, M_htt
 
 	if (len != 0) {
 		M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Misalignment finished with len: %zu instead of 0", len);
-		return M_HTTP2_ERROR_MISALIGNED_SETTINGS;
+		return M_HTTP_ERROR_MISALIGNED_SETTINGS;
 	}
 
 	return h2r->cbs.settings_end_func(framehdr, h2r->thunk);
 }
 
 
-static M_http2_error_t M_http2_reader_read_goaway(M_http2_reader_t *h2r, M_http2_framehdr_t *framehdr, M_parser_t *parser)
+static M_http_error_t M_http2_reader_read_goaway(M_http2_reader_t *h2r, M_http2_framehdr_t *framehdr, M_parser_t *parser)
 {
 	M_http2_goaway_t goaway  = { 0 };
-	M_http2_error_t  errcode = M_HTTP2_ERROR_SUCCESS;
+	M_http_error_t   errcode = M_HTTP_ERROR_SUCCESS;
 
 	goaway.framehdr = framehdr;
 	if (!M_parser_read_stream(parser, &goaway.stream)) {
 		M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Failure reading next 4 bytes (len: %zu)", M_parser_len(parser));
-		return M_HTTP2_ERROR_INTERNAL;
+		return M_HTTP_ERROR_INTERNAL;
 	}
 
 	if (!M_parser_read_bytes_ntoh(parser, goaway.errcode.u8, 4)) {
 		M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Failure reading next 4 bytes (len: %zu)", M_parser_len(parser));
-		return M_HTTP2_ERROR_INTERNAL;
+		return M_HTTP_ERROR_INTERNAL;
 	}
 
 	goaway.debug_data_len = framehdr->len.u32 - 8; /* minus stream and errcode */
@@ -524,16 +524,16 @@ static M_http2_error_t M_http2_reader_read_goaway(M_http2_reader_t *h2r, M_http2
 	return errcode;
 }
 
-M_http2_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *data, size_t data_len, size_t *len_read)
+M_http_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *data, size_t data_len, size_t *len_read)
 {
 	static const char  *pri_str      = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-	M_http2_error_t     res          = M_HTTP2_ERROR_INVALIDUSE;
+	M_http_error_t      res          = M_HTTP_ERROR_INVALIDUSE;
 	size_t              internal_len;
 	M_http2_framehdr_t  framehdr;
 	M_parser_t         *parser;
 
 	if (h2r == NULL || data == NULL || data_len == 0)
-		return M_HTTP2_ERROR_INVALIDUSE;
+		return M_HTTP_ERROR_INVALIDUSE;
 
 	if (len_read == NULL)
 		len_read = &internal_len;
@@ -545,7 +545,7 @@ M_http2_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *
 	if (data_len >= M_str_len(pri_str)) {
 		if (M_mem_eq(data, pri_str, M_str_len(pri_str))) {
 			res = h2r->cbs.pri_str_func(h2r->thunk);
-			if (res != M_HTTP2_ERROR_SUCCESS)
+			if (res != M_HTTP_ERROR_SUCCESS)
 				goto done;
 			M_parser_consume(parser, M_str_len(pri_str));
 		}
@@ -553,12 +553,12 @@ M_http2_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *
 
 	while (M_http2_decode_framehdr(parser, &framehdr)) {
 		if (!M_http2_frame_type_is_valid(framehdr.type)) {
-			res = M_HTTP2_ERROR_INVALID_FRAME_TYPE;
+			res = M_HTTP_ERROR_INVALID_FRAME_TYPE;
 			goto done;
 		}
 		h2r->cbs.frame_begin_func(&framehdr, h2r->thunk);
 		M_parser_mark(parser);
-		res = M_HTTP2_ERROR_SUCCESS;
+		res = M_HTTP_ERROR_SUCCESS;
 		switch(framehdr.type) {
 			case M_HTTP2_FRAME_TYPE_DATA:
 				res = M_http2_reader_read_data(h2r, &framehdr, parser);
@@ -579,10 +579,10 @@ M_http2_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *
 			case M_HTTP2_FRAME_TYPE_WINDOW_UPDATE:
 			case M_HTTP2_FRAME_TYPE_CONTINUATION:
 				M_snprintf(h2r->errmsg, sizeof(h2r->errmsg), "Unsupported frame type: %u\n", framehdr.type);
-				res = M_HTTP2_ERROR_UNSUPPORTED;
+				res = M_HTTP_ERROR_UNSUPPORTED_DATA;
 				break;
 		}
-		if (res != M_HTTP2_ERROR_SUCCESS)
+		if (res != M_HTTP_ERROR_SUCCESS)
 			goto done;
 		M_parser_mark_rewind(parser);
 		M_parser_consume(parser, framehdr.len.u32);
@@ -591,7 +591,7 @@ M_http2_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *
 done:
 	*len_read = data_len - M_parser_len(parser);
 	M_parser_destroy(parser);
-	if (res != M_HTTP2_ERROR_SUCCESS) {
+	if (res != M_HTTP_ERROR_SUCCESS) {
 		h2r->cbs.error_func(res, h2r->errmsg);
 	}
 	return res;

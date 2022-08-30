@@ -30,108 +30,108 @@ typedef struct {
 	size_t pri_str_func_call_count;
 } args_t;
 
-static M_http2_error_t check_http2_reader_frame_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
+static M_http_error_t check_http2_reader_frame_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
 {
 	(void)framehdr;
 	args_t *args = thunk;
 	args->frame_begin_func_call_count++;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t check_http2_reader_frame_end_func(M_http2_framehdr_t *framehdr, void *thunk)
+static M_http_error_t check_http2_reader_frame_end_func(M_http2_framehdr_t *framehdr, void *thunk)
 {
 	(void)framehdr;
 	args_t *args = thunk;
 	args->frame_end_func_call_count++;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t check_http2_reader_goaway_func(M_http2_goaway_t *goaway, void *thunk)
+static M_http_error_t check_http2_reader_goaway_func(M_http2_goaway_t *goaway, void *thunk)
 {
 	(void)goaway;
 	args_t *args = thunk;
 	M_printf("(stream.id=%u,stream.is_R_set=%s,errcode=%u,debug_data=%p,debug_data_len=%zu)\n", goaway->stream.id.u32, goaway->stream.is_R_set ? "M_TRUE" : "M_FALSE", goaway->errcode.u32, goaway->debug_data, goaway->debug_data_len);
 	args->goaway_func_call_count++;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t check_http2_reader_data_func(M_http2_data_t *data, void *thunk)
+static M_http_error_t check_http2_reader_data_func(M_http2_data_t *data, void *thunk)
 {
 	args_t *args = thunk;
 	M_printf("BODY: %.*s\n", (int)data->data_len, data->data);
 	args->data_func_call_count++;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t check_http2_reader_settings_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
+static M_http_error_t check_http2_reader_settings_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
 {
 	(void)framehdr;
 	args_t *args = thunk;
 	args->settings_begin_func_call_count++;
 	M_printf("settings_begin_func()\n");
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t check_http2_reader_settings_end_func(M_http2_framehdr_t *framehdr, void *thunk)
+static M_http_error_t check_http2_reader_settings_end_func(M_http2_framehdr_t *framehdr, void *thunk)
 {
 	(void)framehdr;
 	args_t *args = thunk;
 	args->settings_end_func_call_count++;
 	M_printf("settings_end_func()\n");
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t check_http2_reader_setting_func(M_http2_setting_t *setting, void *thunk)
+static M_http_error_t check_http2_reader_setting_func(M_http2_setting_t *setting, void *thunk)
 {
 	(void)setting;
 	args_t *args = thunk;
 	M_printf("setting: %04x: %08x\n", (M_uint16)setting->type, setting->value.u32);
 	args->setting_func_call_count++;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static void check_http2_reader_error_func(M_http2_error_t errcode, const char *errmsg)
+static void check_http2_reader_error_func(M_http_error_t errcode, const char *errmsg)
 {
 	M_printf("ERROR: (%d) \"%s\"\n", errcode, errmsg);
 }
 
-static M_http2_error_t check_http2_reader_headers_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
+static M_http_error_t check_http2_reader_headers_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
 {
 	(void)framehdr;
 	args_t *args = thunk;
 	args->headers_begin_func_call_count++;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t check_http2_reader_headers_end_func(M_http2_framehdr_t *framehdr, void *thunk)
+static M_http_error_t check_http2_reader_headers_end_func(M_http2_framehdr_t *framehdr, void *thunk)
 {
 	(void)framehdr;
 	args_t *args = thunk;
 	args->headers_end_func_call_count++;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t check_http2_reader_header_priority_func(M_http2_header_priority_t *priority, void *thunk)
+static M_http_error_t check_http2_reader_header_priority_func(M_http2_header_priority_t *priority, void *thunk)
 {
 	(void)priority;
 	args_t *args = thunk;
 	args->header_priority_func_call_count++;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t check_http2_reader_header_func(M_http2_header_t *header, void *thunk)
+static M_http_error_t check_http2_reader_header_func(M_http2_header_t *header, void *thunk)
 {
 	args_t *args = thunk;
 	M_printf("HEADER \"%s\": \"%s\"\n", header->key, header->value);
 	args->header_func_call_count++;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
-static M_http2_error_t check_http2_pri_str_func(void *thunk)
+static M_http_error_t check_http2_pri_str_func(void *thunk)
 {
 	args_t *args = thunk;
 	args->pri_str_func_call_count++;
-	return M_HTTP2_ERROR_SUCCESS;
+	return M_HTTP_ERROR_SUCCESS;
 }
 
 struct M_http2_reader_callbacks test_cbs = {

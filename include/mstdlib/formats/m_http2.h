@@ -1,6 +1,6 @@
 /* The MIT License (MIT)
  *
- * Copyright (c) 2018 Monetra Technologies, LLC.
+ * Copyright (c) 2022 Monetra Technologies, LLC.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -127,20 +127,6 @@ M_bool  M_http2_decode_framehdr(M_parser_t *parser, M_http2_framehdr_t *framehdr
 struct M_http2_reader;
 typedef struct M_http2_reader M_http2_reader_t;
 
-typedef enum {
-	M_HTTP2_ERROR_SUCCESS = 0,                /*!< Success. Data fully parsed and all data is present. */
-	M_HTTP2_ERROR_MOREDATA,                   /*!< Incomplete message, more data required. Not necessarily an error if parsing as data is streaming. */
-	M_HTTP2_ERROR_STOP,                       /*!< Stop processing (Used by callback functions to indicate non-error but stop processing). */
-	M_HTTP2_ERROR_INVALIDUSE,                 /*!< Invalid use. */
-	M_HTTP2_ERROR_INVALID_FRAME_TYPE,
-	M_HTTP2_ERROR_INVALID_SETTING_TYPE,
-	M_HTTP2_ERROR_INTERNAL,
-	M_HTTP2_ERROR_MISALIGNED_SETTINGS,
-	M_HTTP2_ERROR_INVALID_TABLE_INDEX,
-	M_HTTP2_ERROR_UNSUPPORTED,
-} M_http2_error_t;
-
-
 /*! Flags controlling reader behavior. */
 typedef enum {
 	M_HTTP2_READER_NONE = 0,  /*!< Default operation. */
@@ -180,19 +166,19 @@ typedef struct {
 	const char         *value;
 } M_http2_header_t;
 
-typedef M_http2_error_t (*M_http2_reader_frame_begin_func)(M_http2_framehdr_t *framehdr, void *thunk);
-typedef M_http2_error_t (*M_http2_reader_frame_end_func)(M_http2_framehdr_t *framehdr, void *thunk);
-typedef M_http2_error_t (*M_http2_reader_goaway_func)(M_http2_goaway_t *goaway, void *thunk);
-typedef M_http2_error_t (*M_http2_reader_data_func)(M_http2_data_t *data, void *thunk);
-typedef M_http2_error_t (*M_http2_reader_settings_begin_func)(M_http2_framehdr_t *framehdr, void *thunk);
-typedef M_http2_error_t (*M_http2_reader_settings_end_func)(M_http2_framehdr_t *framehdr, void *thunk);
-typedef M_http2_error_t (*M_http2_reader_setting_func)(M_http2_setting_t *setting, void *thunk);
-typedef void            (*M_http2_reader_error_func)(M_http2_error_t errcode, const char *errmsg);
-typedef M_http2_error_t (*M_http2_reader_headers_begin_func)(M_http2_framehdr_t *framehdr, void *thunk);
-typedef M_http2_error_t (*M_http2_reader_headers_end_func)(M_http2_framehdr_t *framehdr, void *thunk);
-typedef M_http2_error_t (*M_http2_reader_header_priority_func)(M_http2_header_priority_t *priority, void *thunk);
-typedef M_http2_error_t (*M_http2_reader_header_func)(M_http2_header_t *header, void *thunk);
-typedef M_http2_error_t (*M_http2_reader_pri_str_func)(void *thunk);
+typedef M_http_error_t (*M_http2_reader_frame_begin_func)(M_http2_framehdr_t *framehdr, void *thunk);
+typedef M_http_error_t (*M_http2_reader_frame_end_func)(M_http2_framehdr_t *framehdr, void *thunk);
+typedef M_http_error_t (*M_http2_reader_goaway_func)(M_http2_goaway_t *goaway, void *thunk);
+typedef M_http_error_t (*M_http2_reader_data_func)(M_http2_data_t *data, void *thunk);
+typedef M_http_error_t (*M_http2_reader_settings_begin_func)(M_http2_framehdr_t *framehdr, void *thunk);
+typedef M_http_error_t (*M_http2_reader_settings_end_func)(M_http2_framehdr_t *framehdr, void *thunk);
+typedef M_http_error_t (*M_http2_reader_setting_func)(M_http2_setting_t *setting, void *thunk);
+typedef void            (*M_http2_reader_error_func)(M_http_error_t errcode, const char *errmsg);
+typedef M_http_error_t (*M_http2_reader_headers_begin_func)(M_http2_framehdr_t *framehdr, void *thunk);
+typedef M_http_error_t (*M_http2_reader_headers_end_func)(M_http2_framehdr_t *framehdr, void *thunk);
+typedef M_http_error_t (*M_http2_reader_header_priority_func)(M_http2_header_priority_t *priority, void *thunk);
+typedef M_http_error_t (*M_http2_reader_header_func)(M_http2_header_t *header, void *thunk);
+typedef M_http_error_t (*M_http2_reader_pri_str_func)(void *thunk);
 
 /*! Callbacks for various stages of parsing. */
 struct M_http2_reader_callbacks {
@@ -213,7 +199,7 @@ struct M_http2_reader_callbacks {
 
 M_API M_http2_reader_t *M_http2_reader_create(const struct M_http2_reader_callbacks *cbs, M_uint32 flags, void *thunk);
 M_API void M_http2_reader_destroy(M_http2_reader_t *h2r);
-M_API M_http2_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *data, size_t data_len, size_t *len_read);
+M_API M_http_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *data, size_t data_len, size_t *len_read);
 
 M_API M_http_error_t M_http2_http_reader_read(M_http_reader_t *httpr, const unsigned char *data, size_t data_len, size_t *len_read);
 
