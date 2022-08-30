@@ -87,6 +87,13 @@ static const M_uint8 test_dat02[] = {
 	"Host: www.google.com\r\n" \
 	"\r\n"
 
+static const M_uint8 test_dat03[] = {
+	0x00, 0x00, 0x21, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01,
+	0x82, 0x87, 0x01, 0x8b, 0xf1, 0xe3, 0xc2, 0xf3, 0x1c, 0xf3, 0x50, 0x55, 0xc8, 0x7a, 0x7f, 0x85,
+	0x00, 0x83, 0xc6, 0x74, 0x27, 0x8b, 0xf1, 0xe3, 0xc2, 0xf3, 0x1c, 0xf3, 0x50, 0x55, 0xc8, 0x7a,
+	0x7f,
+};
+
 /* 1.0 HEAD request no headers. */
 #define http4_data "HEAD / HTTP/1.0\r\n\r\n"
 
@@ -631,16 +638,16 @@ START_TEST(check_httpr3)
 
 	ht  = httpr_test_create();
 	hr  = gen_reader(ht);
-	res = M_http_reader_read(hr, (const unsigned char *)http3_data, M_str_len(http3_data), &len_read);
+	res = M_http_reader_read(hr, (const unsigned char *)test_dat03, sizeof(test_dat03), &len_read);
 
 	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS, "Parse failed: %d", res);
-	ck_assert_msg(len_read == M_str_len(http3_data), "Did not read full message: got '%zu', expected '%zu'", len_read, M_str_len(http3_data));
+	ck_assert_msg(len_read == sizeof(test_dat03), "Did not read full message: got '%zu', expected '%zu'", len_read, M_str_len(http3_data));
 
 	/* Start. */
 	ck_assert_msg(ht->type == M_HTTP_MESSAGE_TYPE_REQUEST, "Wrong type: got '%d', expected '%d'", ht->type, M_HTTP_MESSAGE_TYPE_REQUEST);
 	ck_assert_msg(ht->method == M_HTTP_METHOD_GET, "Wrong method: got '%d', expected '%d'", ht->method, M_HTTP_METHOD_GET);
 	ck_assert_msg(M_str_eq(ht->uri, "https://www.google.com/index.html"), "Wrong uri: got '%s', expected '%s'", ht->uri, "https://www.google.com/index.html");
-	ck_assert_msg(ht->version == M_HTTP_VERSION_1_0, "Wrong version: got '%d', expected '%d'", ht->version, M_HTTP_VERSION_1_1);
+	ck_assert_msg(ht->version == M_HTTP_VERSION_2, "Wrong version: got '%d', expected '%d'", ht->version, M_HTTP_VERSION_1_1);
 
 	httpr_test_destroy(ht);
 	M_http_reader_destroy(hr);
@@ -1199,8 +1206,8 @@ int main(void)
 
 	add_test(suite, check_httpr1);
 	add_test(suite, check_httpr2);
-	/*
 	add_test(suite, check_httpr3);
+	/*
 	add_test(suite, check_httpr4);
 	add_test(suite, check_httpr5);
 	add_test(suite, check_httpr6);
