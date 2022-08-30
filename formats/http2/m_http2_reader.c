@@ -531,6 +531,7 @@ M_http_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *d
 	size_t              internal_len;
 	M_http2_framehdr_t  framehdr;
 	M_parser_t         *parser;
+	size_t              len_skipped;
 
 	if (h2r == NULL || data == NULL || data_len == 0)
 		return M_HTTP_ERROR_INVALIDUSE;
@@ -541,6 +542,8 @@ M_http_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *d
 	*len_read = 0;
 
 	parser = M_parser_create_const(data, data_len, M_PARSER_SPLIT_FLAG_NONE);
+
+	len_skipped = M_parser_consume_whitespace(parser, M_PARSER_WHITESPACE_NONE);
 
 	if (data_len >= M_str_len(pri_str)) {
 		if (M_mem_eq(data, pri_str, M_str_len(pri_str))) {
@@ -589,7 +592,7 @@ M_http_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *d
 		h2r->cbs.frame_end_func(&framehdr, h2r->thunk);
 	}
 done:
-	*len_read = data_len - M_parser_len(parser);
+	*len_read = data_len - M_parser_len(parser) - len_skipped;
 	M_parser_destroy(parser);
 	if (res != M_HTTP_ERROR_SUCCESS) {
 		h2r->cbs.error_func(res, h2r->errmsg);
