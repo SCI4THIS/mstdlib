@@ -97,6 +97,15 @@ static const M_uint8 test_dat03[] = {
 /* 1.0 HEAD request no headers. */
 #define http4_data "HEAD / HTTP/1.0\r\n\r\n"
 
+/* Modified to following for required HTTP2 :scheme and :authority entries. */
+/* HEAD https://www.google.com/ HTTP/1.0\r\n\r\n" */
+
+static const M_uint8 test_dat04[] = {
+	0x00, 0x00, 0x1b, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01,
+	0x00, 0x85, 0xb9, 0x49, 0x53, 0x39, 0xe4, 0x84, 0xc7, 0x82, 0x1b, 0xff, 0x87, 0x01, 0x8b, 0xf1,
+	0xe3, 0xc2, 0xf3, 0x1c, 0xf3, 0x50, 0x55, 0xc8, 0x7a, 0x7f, 0x84,
+};
+
 /* Start with \r\n simulating multiple messages in a stream
  * where they are separated by a new line. Body is form encoded.
  * Ends with trailing \r\n that's not read. */
@@ -663,16 +672,16 @@ START_TEST(check_httpr4)
 
 	ht  = httpr_test_create();
 	hr  = gen_reader(ht);
-	res = M_http_reader_read(hr, (const unsigned char *)http4_data, M_str_len(http4_data), &len_read);
+	res = M_http_reader_read(hr, (const unsigned char *)test_dat04, sizeof(test_dat04), &len_read);
 
 	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS, "Parse failed: %d", res);
-	ck_assert_msg(len_read == M_str_len(http4_data), "Did not read full message: got '%zu', expected '%zu'", len_read, M_str_len(http4_data));
+	ck_assert_msg(len_read == sizeof(test_dat04), "Did not read full message: got '%zu', expected '%zu'", len_read, sizeof(test_dat04));
 
 	/* Start. */
 	ck_assert_msg(ht->type == M_HTTP_MESSAGE_TYPE_REQUEST, "Wrong type: got '%d', expected '%d'", ht->type, M_HTTP_MESSAGE_TYPE_REQUEST);
 	ck_assert_msg(ht->method == M_HTTP_METHOD_HEAD, "Wrong method: got '%d', expected '%d'", ht->method, M_HTTP_METHOD_HEAD);
-	ck_assert_msg(M_str_eq(ht->uri, "/"), "Wrong uri: got '%s', expected '%s'", ht->uri, "/");
-	ck_assert_msg(ht->version == M_HTTP_VERSION_1_0, "Wrong version: got '%d', expected '%d'", ht->version, M_HTTP_VERSION_1_1);
+	ck_assert_msg(M_str_eq(ht->uri, "https://www.google.com/"), "Wrong uri: got '%s', expected '%s'", ht->uri, "https://www.google.com/");
+	ck_assert_msg(ht->version == M_HTTP_VERSION_2, "Wrong version: got '%d', expected '%d'", ht->version, M_HTTP_VERSION_1_1);
 
 	httpr_test_destroy(ht);
 	M_http_reader_destroy(hr);
@@ -1207,8 +1216,8 @@ int main(void)
 	add_test(suite, check_httpr1);
 	add_test(suite, check_httpr2);
 	add_test(suite, check_httpr3);
-	/*
 	add_test(suite, check_httpr4);
+	/*
 	add_test(suite, check_httpr5);
 	add_test(suite, check_httpr6);
 	add_test(suite, check_httpr7);
