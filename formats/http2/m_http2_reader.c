@@ -96,7 +96,7 @@ static M_http2_error_t M_http2_reader_pri_str_func_default(void *thunk)
 	return M_HTTP2_ERROR_SUCCESS;
 }
 
-M_http2_reader_t *M_http2_reader_create(struct M_http2_reader_callbacks *cbs, M_uint32 flags, void *thunk)
+M_http2_reader_t *M_http2_reader_create(const struct M_http2_reader_callbacks *cbs, M_uint32 flags, void *thunk)
 {
 	const struct M_http2_reader_callbacks default_cbs = {
 		M_http2_reader_frame_begin_func_default,

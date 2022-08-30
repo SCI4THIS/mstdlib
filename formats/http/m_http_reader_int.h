@@ -64,4 +64,6 @@ struct M_http_reader {
 	M_bool                          have_epilouge;
 };
 
+M_http_error_t M_http_reader_header_entry(M_http_reader_t *httpr, const char *key, const char *val);
+
 #endif

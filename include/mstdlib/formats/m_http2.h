@@ -211,7 +211,7 @@ struct M_http2_reader_callbacks {
 	M_http2_reader_pri_str_func         pri_str_func;
 };
 
-M_API M_http2_reader_t *M_http2_reader_create(struct M_http2_reader_callbacks *cbs, M_uint32 flags, void *thunk);
+M_API M_http2_reader_t *M_http2_reader_create(const struct M_http2_reader_callbacks *cbs, M_uint32 flags, void *thunk);
 M_API void M_http2_reader_destroy(M_http2_reader_t *h2r);
 M_API M_http2_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *data, size_t data_len, size_t *len_read);
 

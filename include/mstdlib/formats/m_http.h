@@ -129,6 +129,7 @@ typedef enum {
 	M_HTTP_VERSION_UNKNOWN = 0, /*!< Unknown. */
 	M_HTTP_VERSION_1_0,         /*!< 1.0 */
 	M_HTTP_VERSION_1_1,         /*!< 1.1 */
+	M_HTTP_VERSION_2,           /*!< 2   */
 } M_http_version_t;
 
 
