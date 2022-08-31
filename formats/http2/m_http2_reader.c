@@ -259,8 +259,15 @@ static M_http_error_t M_http2_reader_read_header_string(M_parser_t *parser, char
 {
 	size_t parser_len = M_parser_len(parser);
 	*str = M_http2_decode_string_alloc(parser);
-	if (*str == NULL)
+	if (*str == NULL) {
+		if ((parser_len - M_parser_len(parser)) == 1) {
+			/* This was a parsed out value */
+			(*len)--;
+			return M_HTTP_ERROR_SUCCESS;
+		}
+		/* There was a failure */
 		return M_HTTP_ERROR_INTERNAL;
+	}
 	*len -= (parser_len - M_parser_len(parser));
 	return M_HTTP_ERROR_SUCCESS;
 }

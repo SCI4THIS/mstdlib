@@ -56,8 +56,7 @@ static M_http_error_t M_http2_http_reader_data_func(M_http2_data_t *data, void *
 {
 	M_http2_http_args_t *args    = thunk;
 	M_http_reader_t     *hr      = args->hr;
-	M_http_error_t       h_error = hr->cbs.body_func(data->data, data->data_len, hr->thunk);
-	return h_error;
+	return hr->cbs.body_func(data->data, data->data_len, hr->thunk);
 }
 
 static M_http_error_t M_http2_http_reader_settings_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
@@ -85,6 +84,7 @@ static void M_http2_http_reader_error_func(M_http_error_t errcode, const char *e
 {
 	(void)errcode;
 	(void)errmsg;
+	M_printf("ERROR: %s\n", errmsg);
 }
 
 static M_http_error_t M_http2_http_reader_headers_begin_func(M_http2_framehdr_t *framehdr, void *thunk)

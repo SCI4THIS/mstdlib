@@ -88,9 +88,16 @@ void M_http2_encode_number_chain(M_uint64 num, M_buf_t *buf)
 
 void M_http2_encode_string(const char *str, M_buf_t *buf)
 {
-	M_buf_t *encode_buf = M_buf_create();
+	M_buf_t *encode_buf;
 	M_uint8  byte;
 	size_t   len;
+
+	if (str == NULL || M_str_len(str) == 0) {
+		M_buf_add_byte(buf, 0x80);
+		return;
+	}
+
+	encode_buf = M_buf_create();
 
 	M_http2_encode_huffman((M_uint8*)str, M_str_len(str), encode_buf);
 	len = M_buf_len(encode_buf);
