@@ -220,6 +220,23 @@ static const M_uint8 test_dat06[] = {
 	"Trailer 2: Also a trailer\r\n" \
 	"\r\n"
 
+static const M_uint8 test_dat07[] = {
+	0x00, 0x00, 0x47, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, /* HEADER frame */
+	0x88, 0x00, 0x8d, 0xdf, 0x60, 0xea, 0x44, 0xa5, 0xb1, 0x6c, 0x15, 0x10, 0xf2, 0x1a, 0xa9, 0xbf,
+	0x86, 0x24, 0xf6, 0xd5, 0xd4, 0xb2, 0x7f, 0x00, 0x89, 0xbc, 0x7a, 0x92, 0x5a, 0x92, 0xb6, 0xff,
+	0x55, 0x97, 0x89, 0xa4, 0xa8, 0x40, 0xe6, 0x2b, 0x13, 0xa5, 0x35, 0xff, 0x00, 0x87, 0xbc, 0x7a,
+	0xaa, 0x29, 0x12, 0x63, 0xd5, 0x84, 0x25, 0x07, 0x41, 0x7f, 0x00, 0x85, 0xdc, 0x5b, 0x3b, 0x96,
+	0xcf, 0x85, 0x41, 0x6c, 0xee, 0x5b, 0x3f,
+	0x00, 0x00, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, /* DATA frame */
+	0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e, 0x3c, 0x62, 0x6f, 0x64, 0x79, 0x3e, 0x43, 0x68, 0x75, 0x6e,
+	0x6b, 0x3c, 0x2f, 0x62, 0x6f, 0x64, 0x79, 0x3e, 0x3c, 0x2f, 0x68, 0x74, 0x6d, 0x6c, 0x3e,
+	0x00, 0x00, 0x32, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, /* HEADER frame (trailer) */
+	0x00, 0x8c, 0x4d, 0x83, 0x35, 0x05, 0xb1, 0x6d, 0xf6, 0x0c, 0xd4, 0x16, 0xc5, 0x03, 0x8a, 0xc8,
+	0xa0, 0xe9, 0x50, 0x6a, 0x26, 0xc1, 0x9a, 0x82, 0xd9, 0x00, 0x8c, 0x4d, 0x83, 0x35, 0x05, 0xb1,
+	0x6d, 0xf6, 0x0c, 0xd4, 0x16, 0xc5, 0x05, 0x8a, 0x86, 0x84, 0x1d, 0x41, 0xa8, 0x9b, 0x06, 0x6a,
+	0x0b, 0x67,
+};
+
 /* Multipart data. */
 #define http8_data "POST /upload/data HTTP/1.1\r\n" \
 	"Host: 127.0.0.1\r\n" \
@@ -345,25 +362,36 @@ static M_http_error_t start_func(M_http_message_type_t type, M_http_version_t ve
 	return M_HTTP_ERROR_SUCCESS;
 }
 
+static M_http_error_t trailer_full_func(const char *key, const char *val, void *thunk);
+
 static M_http_error_t header_full_func(const char *key, const char *val, void *thunk)
 {
-	httpr_test_t *ht = thunk;
+	httpr_test_t *ht           = thunk;
+	const char   *trailer_str  = "trailer-";
+
+	if (M_str_eq_start(key, trailer_str))
+		return trailer_full_func(&key[M_str_len(trailer_str)], val, thunk);
 
 	M_hash_dict_insert(ht->headers_full, key, val);
 	return M_HTTP_ERROR_SUCCESS;
 }
 
 static M_http_error_t chunk_extensions_func(const char *key, const char *val, size_t idx, void *thunk);
+static M_http_error_t trailer_func(const char *key, const char *val, void *thunk);
 
 static M_http_error_t header_func(const char *key, const char *val, void *thunk)
 {
 	const char   *chunkext_str = "chunk-extension-";
+	const char   *trailer_str  = "trailer-";
 	httpr_test_t *ht           = thunk;
 
 	if (M_str_eq_start(key, chunkext_str)) {
 		size_t idx = 0;
 		return chunk_extensions_func(&key[M_str_len(chunkext_str)], val, idx, thunk);
 	}
+
+	if (M_str_eq_start(key, trailer_str))
+		return trailer_func(&key[M_str_len(trailer_str)], val, thunk);
 
 	if (M_str_isempty(val))
 		return M_HTTP_ERROR_SUCCESS;
@@ -876,14 +904,14 @@ START_TEST(check_httpr7)
 
 	ht  = httpr_test_create();
 	hr  = gen_reader(ht);
-	res = M_http_reader_read(hr, (const unsigned char *)http7_data, M_str_len(http7_data), &len_read);
+	res = M_http_reader_read(hr, (const unsigned char *)test_dat07, sizeof(test_dat07), &len_read);
 
 	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS, "Parse failed: %d", res);
-	ck_assert_msg(len_read == M_str_len(http7_data), "Did not read full message: got '%zu', expected '%zu'", len_read, M_str_len(http7_data));
+	ck_assert_msg(len_read == sizeof(test_dat07), "Did not read full message: got '%zu', expected '%zu'", len_read, sizeof(test_dat07));
 
 	/* Start. */
 	ck_assert_msg(ht->type == M_HTTP_MESSAGE_TYPE_RESPONSE, "Wrong type: got '%d', expected '%d'", ht->type, M_HTTP_MESSAGE_TYPE_RESPONSE);
-	ck_assert_msg(ht->version == M_HTTP_VERSION_1_1, "Wrong version: got '%d', expected '%d'", ht->version, M_HTTP_VERSION_1_1);
+	ck_assert_msg(ht->version == M_HTTP_VERSION_2, "Wrong version: got '%d', expected '%d'", ht->version, M_HTTP_VERSION_2);
 	ck_assert_msg(ht->code == 200, "Wrong code: got '%u', expected '%u'", ht->code, 200);
 	ck_assert_msg(M_str_eq(ht->reason, "OK"), "Wrong reason: got '%s', expected '%s'", ht->reason, "OK");
 
@@ -1288,8 +1316,8 @@ int main(void)
 	add_test(suite, check_httpr4);
 	add_test(suite, check_httpr5);
 	add_test(suite, check_httpr6);
-	/*
 	add_test(suite, check_httpr7);
+	/*
 	add_test(suite, check_httpr8);
 	add_test(suite, check_httpr9);
 	add_test(suite, check_httpr10);
