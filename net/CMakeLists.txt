@@ -6,8 +6,6 @@ project(mstdlib_net
 )
 set(PROJECT_SOVERSION ${MSTDLIB_SOVERSION_STRING})
 
-find_package(NGHTTP2 REQUIRED)
-
 include(InstallDepLibs) # Provides copy_deplibs() and install_deplibs()
 
 find_package(OpenSSL REQUIRED)
@@ -26,9 +24,6 @@ set(sources
 	smtp/m_net_smtp_endpoint.c
 	smtp/m_net_smtp_session.c
 	smtp/m_net_smtp_queue.c
-	http2/m_http2.c
-	http2/m_http2_nghttp2.c
-	http2/m_http2_layer.c
 )
 
 set_source_files_properties(m_net_http_simple.c PROPERTIES COMPILE_DEFINITIONS NET_HTTP_VERSION="${MSTDLIB_VERSION_STRING}")
