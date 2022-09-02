@@ -34,7 +34,7 @@ set(sources
 	ini/m_ini_writer.c
 
 	# http2:
-	http2/m_http2_cipher.c
+	http2/m_http2.c
 	http2/m_http2_reader.c
 	http2/m_http2_http_reader.c
 
