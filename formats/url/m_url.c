@@ -46,6 +46,26 @@ static void M_url_set_field(const char *url_str, struct http_parser_url *url, ch
 	}
 }
 
+static void M_url_default_port(M_url_t *url)
+{
+	size_t i;
+	struct {
+		const char *schema;
+		M_uint16    port;
+	} lookup[] = {
+		{ "https", 443 },
+		{ "http" , 80  },
+	};
+
+	for (i=0; i<sizeof(lookup)/sizeof(lookup[0]); i++) {
+		if (M_str_eq(url->schema, lookup[i].schema)) {
+			url->port_u16 = lookup[i].port;
+			break;
+		}
+	}
+
+}
+
 M_url_t *M_url_create(const char *url_str)
 {
 	struct http_parser_url  url_st = { 0 };
@@ -69,6 +89,9 @@ M_url_t *M_url_create(const char *url_str)
 	M_url_set_field(url_str, &url_st, &url->query   , UF_QUERY);
 	M_url_set_field(url_str, &url_st, &url->fragment, UF_FRAGMENT);
 	M_url_set_field(url_str, &url_st, &url->userinfo, UF_USERINFO);
+
+	if (url->port == NULL)
+		M_url_default_port(url);
 
 	return url;
 }

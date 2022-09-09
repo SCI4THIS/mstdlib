@@ -205,6 +205,34 @@ M_API M_http_error_t M_http2_http_reader_read(M_http_reader_t *httpr, const unsi
 
 /*! @} */
 
+/*! \addtogroup m_http2_frame HTTP2 Frame Writer
+ *  \ingroup m_http2
+ *
+ * HTTP 2 frame writing.
+ *
+ * @{
+ */
+
+struct M_http2_frame_settings;
+typedef struct M_http2_frame_settings M_http2_frame_settings_t;
+
+M_API M_http2_frame_settings_t *M_http2_frame_settings_create(M_uint32 stream_id, M_uint8 flags);
+M_API M_uint8 *M_http2_frame_settings_finish(M_http2_frame_settings_t *h2f_settings, size_t *len);
+M_API M_bool M_http2_frame_settings_finish_to_buf(M_http2_frame_settings_t *h2f_settings, M_buf_t *buf);
+M_API void M_http2_frame_settings_destroy(M_http2_frame_settings_t *h2f_settings);
+M_API void M_http2_frame_settings_add(M_http2_frame_settings_t *h2f_settings, M_http2_setting_type_t type, M_uint32 val);
+
+struct M_http2_frame_headers;
+typedef struct M_http2_frame_headers M_http2_frame_headers_t;
+
+M_API M_http2_frame_headers_t *M_http2_frame_headers_create(M_uint32 stream_id, M_uint8 flags);
+M_API M_uint8 *M_http2_frame_headers_finish(M_http2_frame_headers_t *h2f_headers, size_t *len);
+M_API M_bool M_http2_frame_headers_finish_to_buf(M_http2_frame_headers_t *h2f_headers, M_buf_t *buf);
+M_API void M_http2_frame_headers_destroy(M_http2_frame_headers_t *h2f_headers);
+M_API void M_http2_frame_headers_add(M_http2_frame_headers_t *h2f_headers, const char *key, const char *val);
+
+/*! @} */
+
 __END_DECLS
 
 #endif

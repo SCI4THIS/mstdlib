@@ -77,11 +77,12 @@ struct M_net_http2_simple_callbacks {
  * \param[in] el      Event loop to operate on.
  * \param[in] dns     DNS object. Must be valid for the duration of this object's life.
  * \param[in] cbs     Callbacks that are called on completion of the requests.
-	* \param[in] thunk   Thunk to pass to callbacks.
+ * \param[in] level   TLS verify level
+ * \param[in] thunk   Thunk to pass to callbacks.
  *
  * \return HTTP network object on success. Otherwise NULL on error.
  */
-M_API M_net_http2_simple_t *M_net_http2_simple_create(M_event_t *el, M_dns_t *dns, const struct M_net_http2_simple_callbacks *cbs, void *thunk);
+M_API M_net_http2_simple_t *M_net_http2_simple_create(M_event_t *el, M_dns_t *dns, const struct M_net_http2_simple_callbacks *cbs, M_tls_verify_level_t level, void *thunk);
 
 /*! Destroy a HTTP2 simple network object.
  *
@@ -97,9 +98,9 @@ M_API void M_net_http2_simple_destroy(M_net_http2_simple_t *h2);
  * \param[in] url         the URL to request.
  * \param[in] response_cb callback for response completion.
  *
- * \return HTTP network object on success. Otherwise NULL on error.
+ * \return TRUE on success
  */
-M_API void M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url, M_net_http2_simple_response_cb response_cb);
+M_API M_bool M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url, M_net_http2_simple_response_cb response_cb);
 
 /*! @} */
 

@@ -37,6 +37,8 @@ set(sources
 	http2/m_http2.c
 	http2/m_http2_reader.c
 	http2/m_http2_http_reader.c
+	http2/m_http2_frame_settings.c
+	http2/m_http2_frame_headers.c
 
 	# http:
 	http/m_http.c

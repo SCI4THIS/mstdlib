@@ -24,6 +24,8 @@
 #include <mstdlib/mstdlib.h>
 #include <mstdlib/formats/m_http2.h>
 
+const char *M_http2_pri_str = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
 #include "generated/m_http2_static_header_table.c"
 /* m_http2_static_header_table.c initializes the following struct:
  * static struct {
