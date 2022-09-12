@@ -23,6 +23,18 @@
 
 #include "../m_net_int.h"
 #include "m_net_http2_simple_request.h"
+#include <mstdlib/io/m_io_layer.h> /* M_io_layer_softevent_add */
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+static void trigger_softevent(M_io_t *io, M_event_type_t etype)
+{
+	if (M_io_get_state(io) == M_IO_STATE_CONNECTED) {
+		M_io_layer_t *layer = M_io_layer_acquire(io, 0, NULL);
+		M_io_layer_softevent_add(layer, M_FALSE, etype, M_IO_ERROR_SUCCESS);
+		M_io_layer_release(layer);
+	}
+}
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
@@ -35,13 +47,66 @@ struct M_net_http2_simple {
 	M_io_t                              *io;
 	M_parser_t                          *in_parser;
 	M_buf_t                             *out_buf;
+	M_http2_reader_t                    *h2r;
 	char                                *schema;
 	char                                *authority;
 	M_hash_u64vp_t                      *requests;
 	struct M_net_http2_simple_callbacks  cbs;
+	M_uint32                             max_frame_size;
 	char                                 errmsg[256];
 	M_uint64                             next_stream_id;
 };
+
+static M_http_error_t M_nh2s_setting_func(M_http2_setting_t *setting, void *thunk)
+{
+	M_net_http2_simple_t *h2 = thunk;
+	M_printf("%s:%d: %s({%d,%d}, %p)\n", __FILE__, __LINE__, __FUNCTION__, setting->type, setting->value.u32, h2);
+	return M_HTTP_ERROR_SUCCESS;
+}
+
+static M_http_error_t M_nh2s_settings_end_func(M_http2_framehdr_t *framehdr, void *thunk)
+{
+	M_net_http2_simple_t *h2 = thunk;
+	M_printf("%s:%d: %s(%p,%p)\n", __FILE__, __LINE__, __FUNCTION__, framehdr, thunk);
+	if ((framehdr->flags & 0x01) == 0) {
+		/* Acknowledge settings */
+		M_http2_frame_settings_t *settings = M_http2_frame_settings_create(framehdr->stream.id.u32, 0x01);
+		M_http2_frame_settings_finish_to_buf(settings, h2->out_buf);
+	}
+	return M_HTTP_ERROR_SUCCESS;
+}
+
+static M_http_error_t M_nh2s_header_func(M_http2_header_t *header, void *thunk)
+{
+	M_net_http2_simple_t         *h2      = thunk;
+	M_net_http2_simple_request_t *request = M_hash_u64vp_get_direct(h2->requests, header->framehdr->stream.id.u32);
+	M_printf("%s:%d: %s(%p,%p):\n", __FILE__, __LINE__, __FUNCTION__, header, thunk);
+
+	if (request == NULL)
+		return M_HTTP_ERROR_STREAM_ID;
+
+	M_net_http2_simple_request_add_header(request, header);
+
+	return M_HTTP_ERROR_SUCCESS;
+}
+
+static M_http_error_t M_nh2s_data_func(M_http2_data_t *data, void *thunk)
+{
+	M_net_http2_simple_t         *h2      = thunk;
+	M_net_http2_simple_request_t *request = M_hash_u64vp_get_direct(h2->requests, data->framehdr->stream.id.u32);
+	M_printf("%s:%d: %s(%p,%p):\n", __FILE__, __LINE__, __FUNCTION__, data, thunk);
+	M_printf("%.*s", (int)data->data_len, data->data);
+
+	if (request == NULL)
+		return M_HTTP_ERROR_STREAM_ID;
+
+	M_net_http2_simple_request_add_data(request, data);
+
+	if (data->framehdr->len.u32 < h2->max_frame_size)
+		M_net_http2_simple_request_finish(request);
+
+	return M_HTTP_ERROR_SUCCESS;
+}
 
 static void M_net_http2_simple_error_cb_default(M_http_error_t error, const char *errmsg)
 {
@@ -75,6 +140,11 @@ M_API M_net_http2_simple_t *M_net_http2_simple_create(M_event_t *el, M_dns_t *dn
 		M_net_http2_simple_iocreate_cb_default,
 		M_net_http2_simple_error_cb_default,
 	};
+	struct M_http2_reader_callbacks reader_cbs = { 0 };
+	reader_cbs.setting_func = M_nh2s_setting_func;
+	reader_cbs.settings_end_func = M_nh2s_settings_end_func;
+	reader_cbs.data_func = M_nh2s_data_func;
+	reader_cbs.header_func = M_nh2s_header_func;
 
 	M_net_http2_simple_t *h2 = NULL;
 
@@ -94,6 +164,7 @@ M_API M_net_http2_simple_t *M_net_http2_simple_create(M_event_t *el, M_dns_t *dn
 	h2->level          = level;
 	h2->out_buf        = M_buf_create();
 	h2->in_parser      = M_parser_create(M_PARSER_FLAG_NONE);
+	h2->h2r            = M_http2_reader_create(&reader_cbs, M_HTTP2_READER_NONE, h2);
 	h2->next_stream_id = 1;
 	h2->requests       = M_hash_u64vp_create(8, 75, M_HASH_U64VP_NONE, (void(*)(void*))M_net_http2_simple_request_destroy);
 
@@ -131,6 +202,10 @@ static void M_net_http2_simple_event_cb(M_event_t *el, M_event_type_t type, M_io
 {
 	M_net_http2_simple_t *h2 = thunk;
 	M_io_error_t          ioerr;
+	M_http_error_t        herror;
+	size_t                len;
+
+	M_printf("%s:%d %s(%p,%d,%p,%p)\n", __FILE__, __LINE__, __FUNCTION__, el, type, io, thunk);
 	switch (type) {
 		case M_EVENT_TYPE_CONNECTED:
 		case M_EVENT_TYPE_WRITE:
@@ -146,6 +221,9 @@ static void M_net_http2_simple_event_cb(M_event_t *el, M_event_type_t type, M_io
 				M_net_http2_simple_event_cb(el, M_EVENT_TYPE_DISCONNECTED, io, thunk);
 				return;
 			}
+			herror = M_http2_reader_read(h2->h2r, M_parser_peek(h2->in_parser), M_parser_len(h2->in_parser), &len);
+			M_printf("herror: %d\n", herror);
+			M_parser_consume(h2->in_parser, len);
 			break;
 		case M_EVENT_TYPE_DISCONNECTED:
 			/* Final run */
@@ -171,8 +249,9 @@ static void M_net_http2_simple_init(M_net_http2_simple_t *h2, const char *schema
 
 	M_event_add(h2->el, h2->io, M_net_http2_simple_event_cb, h2);
 
-	h2->schema    = M_strdup(schema);
-	h2->authority = M_strdup(authority);
+	h2->schema         = M_strdup(schema);
+	h2->authority      = M_strdup(authority);
+	h2->max_frame_size = 0x00FFFFFF;
 
 	M_buf_add_str(h2->out_buf, M_http2_pri_str); /* Upgrade to HTTP2 */
 
@@ -181,13 +260,17 @@ static void M_net_http2_simple_init(M_net_http2_simple_t *h2, const char *schema
 	M_http2_frame_settings_add(settings, M_HTTP2_SETTING_ENABLE_PUSH, 0); /* Disable PUSH_PROMISE frames */
 	M_http2_frame_settings_add(settings, M_HTTP2_SETTING_NO_RFC7540_PRIORITIES, 1); /* Disable PRIORITY frames */
 	M_http2_frame_settings_finish_to_buf(settings, h2->out_buf); /* Configure settings */
+
+	trigger_softevent(h2->io, M_EVENT_TYPE_WRITE);
+
 }
 
-M_bool M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url_str, M_net_http2_simple_response_cb response_cb)
+M_bool M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url_str, M_net_http2_simple_response_cb response_cb, void *thunk)
 {
 	M_url_t                      *url        = M_url_create(url_str);
 	M_bool                        is_success = M_FALSE;
 	M_net_http2_simple_request_t *request;
+	M_http2_frame_headers_t      *headers;
 
 	if (h2->io == NULL) {
 		M_net_http2_simple_init(h2, M_url_schema(url), M_url_host(url), M_url_port_u16(url));
@@ -198,8 +281,17 @@ M_bool M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url_str,
 			goto done;
 		}
 	}
-	request = M_net_http2_simple_request_create(h2->next_stream_id, response_cb);
-	M_hash_u64vp_insert(h2->requests, h2->next_stream_id, request);
+
+	headers = M_http2_frame_headers_create((M_uint32)h2->next_stream_id, 0x05); /* END_STREAM | END_HEADERS */
+	M_http2_frame_headers_add(headers, ":scheme", M_url_schema(url));
+	M_http2_frame_headers_add(headers, ":method", "GET");
+	M_http2_frame_headers_add(headers, ":authority", M_url_host(url));
+	M_http2_frame_headers_add(headers, ":path", M_url_path(url));
+	M_http2_frame_headers_finish_to_buf(headers, h2->out_buf);
+	trigger_softevent(h2->io, M_EVENT_TYPE_WRITE);
+
+	request = M_net_http2_simple_request_create(h2->next_stream_id, response_cb, thunk);
+	M_hash_u64vp_insert(h2->requests, (M_uint32)h2->next_stream_id, request);
 	h2->next_stream_id += 2; /* Client requests are odd numbered */
 	is_success = M_TRUE;
 done:

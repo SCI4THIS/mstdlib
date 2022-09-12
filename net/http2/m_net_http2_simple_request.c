@@ -23,16 +23,44 @@
 
 #include "m_net_http2_simple_request.h"
 
-M_net_http2_simple_request_t *M_net_http2_simple_request_create(M_uint64 stream_id, M_net_http2_simple_response_cb response_cb)
+M_net_http2_simple_request_t *M_net_http2_simple_request_create(M_uint64 stream_id, M_net_http2_simple_response_cb response_cb, void *thunk)
 {
 	M_net_http2_simple_request_t *request;
 	request = M_malloc_zero(sizeof(*request));
 	request->stream_id   = stream_id;
 	request->response_cb = response_cb;
+	request->thunk       = thunk;
+	request->data        = M_buf_create();
+	request->headers     = M_hash_dict_create(16, 75, M_HASH_DICT_NONE);
 	return request;
 }
 
 void M_net_http2_simple_request_destroy(M_net_http2_simple_request_t *request)
 {
+	if (request == NULL)
+		return;
+	M_hash_dict_destroy(request->headers);
+	M_buf_cancel(request->data);
 	M_free(request);
+}
+
+void M_net_http2_simple_request_add_header(M_net_http2_simple_request_t *request, M_http2_header_t *header)
+{
+	if (request == NULL || header == NULL)
+		return;
+	M_hash_dict_insert(request->headers, header->key, header->value);
+}
+
+void M_net_http2_simple_request_add_data(M_net_http2_simple_request_t *request, M_http2_data_t *data)
+{
+	if (request == NULL || data == NULL)
+		return;
+	M_buf_add_bytes(request->data, data->data, data->data_len);
+}
+
+void M_net_http2_simple_request_finish(M_net_http2_simple_request_t *request)
+{
+	if (request == NULL)
+		return;
+	request->response_cb(request->headers, M_buf_peek(request->data), M_buf_len(request->data), request->thunk);
 }

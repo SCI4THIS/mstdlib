@@ -118,6 +118,7 @@ typedef enum {
 	M_HTTP_ERROR_INTERNAL,                   /*!< Internal problem. Indicates a processing error. */
 	M_HTTP_ERROR_MISALIGNED_SETTINGS,        /*!< HTTP2 settings frame didn't align properly */
 	M_HTTP_ERROR_INVALID_TABLE_INDEX,        /*!< HTTP2 attempted to index 0, or greater than the maximum table index. */
+	M_HTTP_ERROR_STREAM_ID,                  /*!< HTTP2 bad stream id reference */
 } M_http_error_t;
 
 

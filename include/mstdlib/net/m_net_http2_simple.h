@@ -50,9 +50,28 @@ __BEGIN_DECLS
  *
  * \code{.c}
  * #include <mstdlib/mstdlib.h>
- * #include <mstdlib/mstdlib_io.h>
  * #include <mstdlib/mstdlib_net.h>
- * #include <mstdlib/mstdlib_formats.h>
+ *
+ * void response_cb (M_hash_dict_t *headers, const char *data, size_t data_len, void *thunk)
+ * {
+ * 	M_event_t *el = thunk;
+ * 	M_printf("%.*s", (int)data_len, data);
+ * 	M_event_done(el);
+ * }
+ *
+ * int main(int argc, char **argv)
+ * {
+ * 	M_event_t            *el  = M_event_create(M_EVENT_FLAG_NONE);
+ * 	M_dns_t              *dns = M_dns_create(el);
+ * 	M_net_http2_simple_t *h2  = M_net_http2_simple_create(el, dns, NULL, M_TLS_VERIFY_FULL, NULL);
+ *
+ * 	M_net_http2_simple_request(h2, "https://nghttp2.org/", response_cb, el);
+ * 	M_event_loop(el, M_TIMEOUT_INF);
+ *
+ * 	M_net_http2_simple_destroy(h2);
+ * 	M_dns_destroy(dns);
+ * 	return 0;
+ * }
  *
  * \endcode
  *
@@ -63,7 +82,7 @@ __BEGIN_DECLS
 struct M_net_http2_simple;
 typedef struct M_net_http2_simple M_net_http2_simple_t;
 
-typedef void   (*M_net_http2_simple_response_cb)(M_hash_dict_t *headers, const char *data, size_t data_len);
+typedef void   (*M_net_http2_simple_response_cb)(M_hash_dict_t *headers, const char *data, size_t data_len, void *thunk);
 typedef void   (*M_net_http2_simple_error_cb   )(M_http_error_t error, const char *errmsg);
 typedef M_bool (*M_net_http2_simple_iocreate_cb)(M_io_t *io, char *error, size_t errlen, void *thunk);
 
@@ -97,10 +116,11 @@ M_API void M_net_http2_simple_destroy(M_net_http2_simple_t *h2);
  * \param[in] h2          HTTP2 simple object managing session.
  * \param[in] url         the URL to request.
  * \param[in] response_cb callback for response completion.
+ * \param[in] thunk       thunk object to pass to response_cb
  *
  * \return TRUE on success
  */
-M_API M_bool M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url, M_net_http2_simple_response_cb response_cb);
+M_API M_bool M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url, M_net_http2_simple_response_cb response_cb, void *thunk);
 
 /*! @} */
 
