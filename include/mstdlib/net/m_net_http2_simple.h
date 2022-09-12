@@ -52,27 +52,41 @@ __BEGIN_DECLS
  * #include <mstdlib/mstdlib.h>
  * #include <mstdlib/mstdlib_net.h>
  *
- * void response_cb (M_hash_dict_t *headers, const char *data, size_t data_len, void *thunk)
+ * void response_cb(M_hash_dict_t *headers, const char *data, size_t data_len, void *thunk)
  * {
  * 	M_event_t *el = thunk;
  * 	M_printf("%.*s", (int)data_len, data);
  * 	M_event_done(el);
  * }
  *
+ * void disconnect_cb(void *thunk)
+ * {
+ * 	M_event_t *el = thunk;
+ * 	M_event_done(el);
+ * }
+ *
  * int main(int argc, char **argv)
  * {
+ * 	struct M_net_http2_simple_callbacks cbs = {
+ * 		iocreate_cb,
+ * 		NULL,
+ * 		disconnect_cb,
+ * 	};
+ *
  * 	M_event_t            *el  = M_event_create(M_EVENT_FLAG_NONE);
  * 	M_dns_t              *dns = M_dns_create(el);
- * 	M_net_http2_simple_t *h2  = M_net_http2_simple_create(el, dns, NULL, M_TLS_VERIFY_FULL, NULL);
+ * 	M_net_http2_simple_t *h2  = M_net_http2_simple_create(el, dns, &cbs, M_TLS_VERIFY_FULL, el);
  *
  * 	M_net_http2_simple_request(h2, "https://nghttp2.org/", response_cb, el);
+ * 	M_event_loop(el, M_TIMEOUT_INF);
+ *
+ * 	M_net_http2_simple_goaway(h2);
  * 	M_event_loop(el, M_TIMEOUT_INF);
  *
  * 	M_net_http2_simple_destroy(h2);
  * 	M_dns_destroy(dns);
  * 	return 0;
  * }
- *
  * \endcode
  *
  * @{
@@ -83,12 +97,14 @@ struct M_net_http2_simple;
 typedef struct M_net_http2_simple M_net_http2_simple_t;
 
 typedef void   (*M_net_http2_simple_response_cb)(M_hash_dict_t *headers, const char *data, size_t data_len, void *thunk);
-typedef void   (*M_net_http2_simple_error_cb   )(M_http_error_t error, const char *errmsg);
-typedef M_bool (*M_net_http2_simple_iocreate_cb)(M_io_t *io, char *error, size_t errlen, void *thunk);
+typedef void   (*M_net_http2_simple_error_cb   )  (M_http_error_t error, const char *errmsg);
+typedef M_bool (*M_net_http2_simple_iocreate_cb)  (M_io_t *io, char *error, size_t errlen, void *thunk);
+typedef void   (*M_net_http2_simple_disconnect_cb)(void *thunk);
 
 struct M_net_http2_simple_callbacks {
-	M_net_http2_simple_iocreate_cb iocreate_cb;
-	M_net_http2_simple_error_cb    error_cb;
+	M_net_http2_simple_iocreate_cb   iocreate_cb;
+	M_net_http2_simple_error_cb      error_cb;
+	M_net_http2_simple_disconnect_cb disconnect_cb;
 };
 
 /*! Create a HTTP2 simple network object.
@@ -121,6 +137,14 @@ M_API void M_net_http2_simple_destroy(M_net_http2_simple_t *h2);
  * \return TRUE on success
  */
 M_API M_bool M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url, M_net_http2_simple_response_cb response_cb, void *thunk);
+
+/*! Request disconnect via HTTP2 GOAWAY
+ *
+ * \param[in] h2          HTTP2 simple object managing session.
+ *
+ * \return TRUE on success
+ */
+M_API M_bool M_net_http2_simple_goaway(M_net_http2_simple_t *h2);
 
 /*! @} */
 

@@ -113,6 +113,11 @@ static M_bool M_net_http2_simple_iocreate_cb_default(M_io_t *io, char *error, si
 	
 }
 
+static void M_net_http2_simple_disconnect_cb_default(void *thunk)
+{
+	(void)thunk;
+}
+
 static void M_assign_cbs(void **dst_cbs, void *const*src_cbs, size_t len)
 {
 	size_t i;
@@ -123,18 +128,18 @@ static void M_assign_cbs(void **dst_cbs, void *const*src_cbs, size_t len)
 	}
 }
 
-M_API M_net_http2_simple_t *M_net_http2_simple_create(M_event_t *el, M_dns_t *dns, const struct M_net_http2_simple_callbacks *cbs, M_tls_verify_level_t level, void *thunk)
+M_net_http2_simple_t *M_net_http2_simple_create(M_event_t *el, M_dns_t *dns, const struct M_net_http2_simple_callbacks *cbs, M_tls_verify_level_t level, void *thunk)
 {
 	static const struct M_net_http2_simple_callbacks default_cbs = {
 		M_net_http2_simple_iocreate_cb_default,
 		M_net_http2_simple_error_cb_default,
+		M_net_http2_simple_disconnect_cb_default,
 	};
+	M_net_http2_simple_t *h2 = NULL;
 	struct M_http2_reader_callbacks reader_cbs = { 0 };
 	reader_cbs.settings_end_func = M_nh2s_settings_end_func;
 	reader_cbs.data_func = M_nh2s_data_func;
 	reader_cbs.header_func = M_nh2s_header_func;
-
-	M_net_http2_simple_t *h2 = NULL;
 
 	if (el == NULL || dns == NULL)
 		return NULL;
@@ -155,7 +160,6 @@ M_API M_net_http2_simple_t *M_net_http2_simple_create(M_event_t *el, M_dns_t *dn
 	h2->h2r            = M_http2_reader_create(&reader_cbs, M_HTTP2_READER_NONE, h2);
 	h2->next_stream_id = 1;
 	h2->requests       = M_hash_u64vp_create(8, 75, M_HASH_U64VP_NONE, (void(*)(void*))M_net_http2_simple_request_destroy);
-
 	return h2;
 }
 
@@ -163,6 +167,7 @@ void M_net_http2_simple_destroy(M_net_http2_simple_t *h2)
 {
 	if (h2 == NULL)
 		return;
+	M_io_destroy(h2->io);
 	M_buf_cancel(h2->out_buf);
 	M_parser_destroy(h2->in_parser);
 	M_free(h2->schema);
@@ -188,35 +193,47 @@ static void M_net_http2_simple_init_tls(M_io_t *io, M_tls_verify_level_t level, 
 
 static void M_net_http2_simple_event_cb(M_event_t *el, M_event_type_t type, M_io_t *io, void *thunk)
 {
+	(void)el;
+	(void)io;
 	M_net_http2_simple_t *h2 = thunk;
 	M_io_error_t          ioerr;
 	size_t                len;
+
+	M_printf("M_net_http2_simple_event_cb(%p,%d,%p,%p)\n", el, type, io, thunk);
 
 	switch (type) {
 		case M_EVENT_TYPE_CONNECTED:
 		case M_EVENT_TYPE_WRITE:
 			ioerr = M_io_write_from_buf(h2->io, h2->out_buf);
-			if (ioerr == M_IO_ERROR_DISCONNECT) {
-				M_net_http2_simple_event_cb(el, M_EVENT_TYPE_DISCONNECTED, io, thunk);
-				return;
-			}
+			if (ioerr == M_IO_ERROR_DISCONNECT)
+				goto disconnect;
 			break;
 		case M_EVENT_TYPE_READ:
 			ioerr = M_io_read_into_parser(h2->io, h2->in_parser);
-			if (ioerr == M_IO_ERROR_DISCONNECT) {
-				M_net_http2_simple_event_cb(el, M_EVENT_TYPE_DISCONNECTED, io, thunk);
-				return;
-			}
+			if (ioerr == M_IO_ERROR_DISCONNECT)
+				goto disconnect;
 			M_http2_reader_read(h2->h2r, M_parser_peek(h2->in_parser), M_parser_len(h2->in_parser), &len);
 			M_parser_consume(h2->in_parser, len);
 			break;
+		case M_EVENT_TYPE_ACCEPT:
+			h2->cbs.error_cb(M_HTTP_ERROR_INTERNAL, "Unexexpected ACCEPT event");
+			goto disconnect;
+		case M_EVENT_TYPE_OTHER:
+			break;
+		case M_EVENT_TYPE_ERROR:
+			h2->cbs.error_cb(M_HTTP_ERROR_INTERNAL, h2->errmsg);
+			goto disconnect;
 		case M_EVENT_TYPE_DISCONNECTED:
-			/* Final run */
-			M_io_destroy(h2->io);
-			h2->io = NULL;
-			return;
+			goto disconnect;
 	}
-
+	return;
+disconnect:
+	if (h2->io != NULL) {
+		M_io_destroy(h2->io);
+		h2->io = NULL;
+		h2->cbs.disconnect_cb(h2->thunk);
+	}
+	return;
 }
 
 static void M_net_http2_simple_init(M_net_http2_simple_t *h2, const char *schema, const char *authority, M_uint16 port)
@@ -228,9 +245,17 @@ static void M_net_http2_simple_init(M_net_http2_simple_t *h2, const char *schema
 	if (ioerr != M_IO_ERROR_SUCCESS) {
 		M_snprintf(h2->errmsg, sizeof(h2->errmsg), "Error creating IO: %s\n", M_io_error_string(ioerr));
 		h2->cbs.error_cb(M_HTTP_ERROR_INTERNAL, h2->errmsg);
+		return;
 	}
 
 	M_net_http2_simple_init_tls(h2->io, h2->level, authority);
+
+	if (!h2->cbs.iocreate_cb(h2->io, h2->errmsg, sizeof(h2->errmsg), h2->thunk)) {
+		h2->cbs.error_cb(M_HTTP_ERROR_INTERNAL, h2->errmsg);
+		M_io_destroy(h2->io);
+		h2->io = NULL;
+		return;
+	}
 
 	M_event_add(h2->el, h2->io, M_net_http2_simple_event_cb, h2);
 
@@ -250,12 +275,25 @@ static void M_net_http2_simple_init(M_net_http2_simple_t *h2, const char *schema
 
 }
 
+M_bool M_net_http2_simple_goaway(M_net_http2_simple_t *h2)
+{
+	M_http2_stream_t stream = { M_FALSE, { 0 } };
+	if (h2 == NULL || h2->io == NULL)
+		return M_FALSE;
+	M_http2_goaway_to_buf(&stream, 0, NULL, 0, h2->out_buf);
+	trigger_softevent(h2->io, M_EVENT_TYPE_WRITE);
+	return M_TRUE;
+}
+
 M_bool M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url_str, M_net_http2_simple_response_cb response_cb, void *thunk)
 {
 	M_url_t                      *url        = M_url_create(url_str);
 	M_bool                        is_success = M_FALSE;
 	M_net_http2_simple_request_t *request;
 	M_http2_frame_headers_t      *headers;
+
+	if (h2 == NULL)
+		return M_FALSE;
 
 	if (h2->io == NULL) {
 		M_net_http2_simple_init(h2, M_url_schema(url), M_url_host(url), M_url_port_u16(url));

@@ -231,6 +231,9 @@ M_API M_bool M_http2_frame_headers_finish_to_buf(M_http2_frame_headers_t *h2f_he
 M_API void M_http2_frame_headers_destroy(M_http2_frame_headers_t *h2f_headers);
 M_API void M_http2_frame_headers_add(M_http2_frame_headers_t *h2f_headers, const char *key, const char *val);
 
+M_API void M_http2_goaway_to_buf(M_http2_stream_t *stream, M_uint32 errcode, const M_uint8 *data, size_t data_len, M_buf_t *buf);
+M_API M_uint8 *M_http2_goaway_to_data(M_http2_stream_t *stream, M_uint32 errcode, const M_uint8 *data, size_t data_len);
+
 /*! @} */
 
 __END_DECLS

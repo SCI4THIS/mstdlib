@@ -450,6 +450,7 @@ const char *M_http_errcode_to_str(M_http_error_t err)
 		ERRCASE(M_HTTP_ERROR_INTERNAL);
 		ERRCASE(M_HTTP_ERROR_MISALIGNED_SETTINGS);
 		ERRCASE(M_HTTP_ERROR_INVALID_TABLE_INDEX);
+		ERRCASE(M_HTTP_ERROR_STREAM_ID);
 	}
 	return ret;
 }
