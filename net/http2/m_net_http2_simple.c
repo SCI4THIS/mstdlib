@@ -57,17 +57,9 @@ struct M_net_http2_simple {
 	M_uint64                             next_stream_id;
 };
 
-static M_http_error_t M_nh2s_setting_func(M_http2_setting_t *setting, void *thunk)
-{
-	M_net_http2_simple_t *h2 = thunk;
-	M_printf("%s:%d: %s({%d,%d}, %p)\n", __FILE__, __LINE__, __FUNCTION__, setting->type, setting->value.u32, h2);
-	return M_HTTP_ERROR_SUCCESS;
-}
-
 static M_http_error_t M_nh2s_settings_end_func(M_http2_framehdr_t *framehdr, void *thunk)
 {
 	M_net_http2_simple_t *h2 = thunk;
-	M_printf("%s:%d: %s(%p,%p)\n", __FILE__, __LINE__, __FUNCTION__, framehdr, thunk);
 	if ((framehdr->flags & 0x01) == 0) {
 		/* Acknowledge settings */
 		M_http2_frame_settings_t *settings = M_http2_frame_settings_create(framehdr->stream.id.u32, 0x01);
@@ -80,7 +72,6 @@ static M_http_error_t M_nh2s_header_func(M_http2_header_t *header, void *thunk)
 {
 	M_net_http2_simple_t         *h2      = thunk;
 	M_net_http2_simple_request_t *request = M_hash_u64vp_get_direct(h2->requests, header->framehdr->stream.id.u32);
-	M_printf("%s:%d: %s(%p,%p):\n", __FILE__, __LINE__, __FUNCTION__, header, thunk);
 
 	if (request == NULL)
 		return M_HTTP_ERROR_STREAM_ID;
@@ -94,8 +85,6 @@ static M_http_error_t M_nh2s_data_func(M_http2_data_t *data, void *thunk)
 {
 	M_net_http2_simple_t         *h2      = thunk;
 	M_net_http2_simple_request_t *request = M_hash_u64vp_get_direct(h2->requests, data->framehdr->stream.id.u32);
-	M_printf("%s:%d: %s(%p,%p):\n", __FILE__, __LINE__, __FUNCTION__, data, thunk);
-	M_printf("%.*s", (int)data->data_len, data->data);
 
 	if (request == NULL)
 		return M_HTTP_ERROR_STREAM_ID;
@@ -141,7 +130,6 @@ M_API M_net_http2_simple_t *M_net_http2_simple_create(M_event_t *el, M_dns_t *dn
 		M_net_http2_simple_error_cb_default,
 	};
 	struct M_http2_reader_callbacks reader_cbs = { 0 };
-	reader_cbs.setting_func = M_nh2s_setting_func;
 	reader_cbs.settings_end_func = M_nh2s_settings_end_func;
 	reader_cbs.data_func = M_nh2s_data_func;
 	reader_cbs.header_func = M_nh2s_header_func;
@@ -202,10 +190,8 @@ static void M_net_http2_simple_event_cb(M_event_t *el, M_event_type_t type, M_io
 {
 	M_net_http2_simple_t *h2 = thunk;
 	M_io_error_t          ioerr;
-	M_http_error_t        herror;
 	size_t                len;
 
-	M_printf("%s:%d %s(%p,%d,%p,%p)\n", __FILE__, __LINE__, __FUNCTION__, el, type, io, thunk);
 	switch (type) {
 		case M_EVENT_TYPE_CONNECTED:
 		case M_EVENT_TYPE_WRITE:
@@ -221,8 +207,7 @@ static void M_net_http2_simple_event_cb(M_event_t *el, M_event_type_t type, M_io
 				M_net_http2_simple_event_cb(el, M_EVENT_TYPE_DISCONNECTED, io, thunk);
 				return;
 			}
-			herror = M_http2_reader_read(h2->h2r, M_parser_peek(h2->in_parser), M_parser_len(h2->in_parser), &len);
-			M_printf("herror: %d\n", herror);
+			M_http2_reader_read(h2->h2r, M_parser_peek(h2->in_parser), M_parser_len(h2->in_parser), &len);
 			M_parser_consume(h2->in_parser, len);
 			break;
 		case M_EVENT_TYPE_DISCONNECTED:
