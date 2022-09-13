@@ -285,7 +285,7 @@ M_bool M_net_http2_simple_goaway(M_net_http2_simple_t *h2)
 	return M_TRUE;
 }
 
-M_bool M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url_str, M_net_http2_simple_response_cb response_cb, void *thunk)
+M_bool M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url_str, M_net_http2_simple_response_cb response_cb)
 {
 	M_url_t                      *url        = M_url_create(url_str);
 	M_bool                        is_success = M_FALSE;
@@ -313,7 +313,7 @@ M_bool M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url_str,
 	M_http2_frame_headers_finish_to_buf(headers, h2->out_buf);
 	trigger_softevent(h2->io, M_EVENT_TYPE_WRITE);
 
-	request = M_net_http2_simple_request_create(h2->next_stream_id, response_cb, thunk);
+	request = M_net_http2_simple_request_create(h2->next_stream_id, response_cb, h2->thunk, url_str);
 	M_hash_u64vp_insert(h2->requests, (M_uint32)h2->next_stream_id, request);
 	h2->next_stream_id += 2; /* Client requests are odd numbered */
 	is_success = M_TRUE;

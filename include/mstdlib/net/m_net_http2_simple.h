@@ -52,9 +52,10 @@ __BEGIN_DECLS
  * #include <mstdlib/mstdlib.h>
  * #include <mstdlib/mstdlib_net.h>
  *
- * void response_cb(M_hash_dict_t *headers, const char *data, size_t data_len, void *thunk)
+ * void response_cb(const char *url_str, M_hash_dict_t *headers, const char *data, size_t data_len, void *thunk)
  * {
  * 	M_event_t *el = thunk;
+ * 	M_printf("%s\n", url_str);
  * 	M_printf("%.*s", (int)data_len, data);
  * 	M_event_done(el);
  * }
@@ -68,7 +69,7 @@ __BEGIN_DECLS
  * int main(int argc, char **argv)
  * {
  * 	struct M_net_http2_simple_callbacks cbs = {
- * 		iocreate_cb,
+ * 		NULL,
  * 		NULL,
  * 		disconnect_cb,
  * 	};
@@ -77,7 +78,7 @@ __BEGIN_DECLS
  * 	M_dns_t              *dns = M_dns_create(el);
  * 	M_net_http2_simple_t *h2  = M_net_http2_simple_create(el, dns, &cbs, M_TLS_VERIFY_FULL, el);
  *
- * 	M_net_http2_simple_request(h2, "https://nghttp2.org/", response_cb, el);
+ * 	M_net_http2_simple_request(h2, "https://nghttp2.org/", response_cb);
  * 	M_event_loop(el, M_TIMEOUT_INF);
  *
  * 	M_net_http2_simple_goaway(h2);
@@ -96,7 +97,7 @@ __BEGIN_DECLS
 struct M_net_http2_simple;
 typedef struct M_net_http2_simple M_net_http2_simple_t;
 
-typedef void   (*M_net_http2_simple_response_cb)(M_hash_dict_t *headers, const char *data, size_t data_len, void *thunk);
+typedef void   (*M_net_http2_simple_response_cb)(const char *url_str, M_hash_dict_t *headers, const char *data, size_t data_len, void *thunk);
 typedef void   (*M_net_http2_simple_error_cb   )  (M_http_error_t error, const char *errmsg);
 typedef M_bool (*M_net_http2_simple_iocreate_cb)  (M_io_t *io, char *error, size_t errlen, void *thunk);
 typedef void   (*M_net_http2_simple_disconnect_cb)(void *thunk);
@@ -132,11 +133,10 @@ M_API void M_net_http2_simple_destroy(M_net_http2_simple_t *h2);
  * \param[in] h2          HTTP2 simple object managing session.
  * \param[in] url         the URL to request.
  * \param[in] response_cb callback for response completion.
- * \param[in] thunk       thunk object to pass to response_cb
  *
  * \return TRUE on success
  */
-M_API M_bool M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url, M_net_http2_simple_response_cb response_cb, void *thunk);
+M_API M_bool M_net_http2_simple_request(M_net_http2_simple_t *h2, const char *url, M_net_http2_simple_response_cb response_cb);
 
 /*! Request disconnect via HTTP2 GOAWAY
  *

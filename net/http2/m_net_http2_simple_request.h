@@ -32,10 +32,11 @@ typedef struct {
 	M_buf_t                        *data;
 	M_hash_dict_t                  *headers;
 	void                           *thunk;
+	char                           *url_str;
 } M_net_http2_simple_request_t;
 
 M_net_http2_simple_request_t *
-     M_net_http2_simple_request_create(M_uint64 stream_id, M_net_http2_simple_response_cb response_cb, void *thunk);
+     M_net_http2_simple_request_create(M_uint64 stream_id, M_net_http2_simple_response_cb response_cb, void *thunk, const char *url_str);
 void M_net_http2_simple_request_destroy(M_net_http2_simple_request_t *request);
 void M_net_http2_simple_request_add_header(M_net_http2_simple_request_t *request, M_http2_header_t *header);
 void M_net_http2_simple_request_add_data(M_net_http2_simple_request_t *request, M_http2_data_t *data);
