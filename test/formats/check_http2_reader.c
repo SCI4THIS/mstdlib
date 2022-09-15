@@ -397,6 +397,21 @@ static const M_uint8 test_dat09[] = {
 	"\r\n" \
 	"Message 3"
 
+static const M_uint8 test_dat10[] = {
+	0x00, 0x00, 0x0f, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, /* HEADER frame */
+	0x88, 0x00, 0x8a, 0xbc, 0x7a, 0x92, 0x5a, 0x92, 0xb6, 0x72, 0xd5, 0x32, 0x67, 0x81, 0x7f,
+	0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, /* DATA frame */
+	'M' , 'e' , 's' , 's' , 'a' , 'g' , 'e' , ' ' , '1' ,
+	0x00, 0x00, 0x0f, 0x01, 0x00, 0x00, 0x00, 0x00, 0x03, /* HEADER frame */
+	0x88, 0x00, 0x8a, 0xbc, 0x7a, 0x92, 0x5a, 0x92, 0xb6, 0x72, 0xd5, 0x32, 0x67, 0x81, 0x7f,
+	0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, /* DATA frame */
+	'M' , 'e' , 's' , 's' , 'a' , 'g' , 'e' , ' ' , '2' ,
+	0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x05, /* HEADER frame */
+	0x88,
+	0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, /* DATA frame */
+	'M' , 'e' , 's' , 's' , 'a' , 'g' , 'e' , ' ' , '3' ,
+};
+
 #define http11_data "HTTP/1.1 200 OK\r\n" \
 	"Host: blah\r\n"
 
@@ -1155,39 +1170,19 @@ START_TEST(check_httpr10)
 	/* message 1. */
 	ht  = httpr_test_create();
 	hr  = gen_reader(ht);
-	res = M_http_reader_read(hr, (const unsigned char *)http10_data+len, M_str_len(http10_data)-len, &len_read);
+	res = M_http_reader_read(hr, (const unsigned char *)test_dat10, sizeof(test_dat10), &len_read);
 	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS, "Parse failed message %d: %d", 1, res);
-	len += len_read;
+	ck_assert_msg(len_read == sizeof(test_dat10), "Didn't read entire message: %d != %d", len_read, sizeof(test_dat10));
 
-	gval = M_buf_peek(ht->body);
+	gval = M_list_str_at(ht->bpieces, 0);
 	eval = "Message 1";
 	ck_assert_msg(M_str_eq(gval, eval), "Message %d body does not match: got '%s', expected '%s'", 1, gval, eval);
 
-	httpr_test_destroy(ht);
-	M_http_reader_destroy(hr);
-
-	/* message 2. */
-	ht  = httpr_test_create();
-	hr  = gen_reader(ht);
-	res = M_http_reader_read(hr, (const unsigned char *)http10_data+len, M_str_len(http10_data)-len, &len_read);
-	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS, "Parse failed message %d: %d", 2, res);
-	len += len_read;
-
-	gval = M_buf_peek(ht->body);
+	gval = M_list_str_at(ht->bpieces, 1);
 	eval = "Message 2";
 	ck_assert_msg(M_str_eq(gval, eval), "Message %d body does not match: got '%s', expected '%s'", 2, gval, eval);
 
-	httpr_test_destroy(ht);
-	M_http_reader_destroy(hr);
-
-	/* message 3. */
-	ht  = httpr_test_create();
-	hr  = gen_reader(ht);
-	res = M_http_reader_read(hr, (const unsigned char *)http10_data+len, M_str_len(http10_data)-len, &len_read);
-	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS_MORE_POSSIBLE, "Parse failed message %d: %d", 3, res);
-	/*len += len_read;*/
-
-	gval = M_buf_peek(ht->body);
+	gval = M_list_str_at(ht->bpieces, 2);
 	eval = "Message 3";
 	ck_assert_msg(M_str_eq(gval, eval), "Message %d body does not match: got '%s', expected '%s'", 3, gval, eval);
 
@@ -1430,8 +1425,8 @@ int main(void)
 	add_test(suite, check_httpr7);
 	add_test(suite, check_httpr8);
 	add_test(suite, check_httpr9);
-	/*
 	add_test(suite, check_httpr10);
+	/*
 	add_test(suite, check_httpr11);
 	add_test(suite, check_httpr12);
 	add_test(suite, check_httpr13);

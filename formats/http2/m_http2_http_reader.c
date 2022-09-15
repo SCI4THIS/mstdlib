@@ -146,6 +146,12 @@ static M_http_error_t M_http2_http_reader_header_func(M_http2_header_t *header, 
 	M_bool               is_request_header = M_FALSE;
 	M_http_error_t       h_error;
 
+	hr->rstep = M_HTTP_READER_STEP_HEADER;
+	if (hr->data_type == M_HTTP_DATA_FORMAT_MULTIPART) {
+		hr->rstep = M_HTTP_READER_STEP_MULTIPART_HEADER;
+	}
+	hr->body_len_seen = 0;
+
 	if (M_str_eq(header->key, ":status")) {
 		M_uint32 code = M_str_to_uint32(header->value);
 		h_error = hr->cbs.start_func(M_HTTP_MESSAGE_TYPE_RESPONSE, M_HTTP_VERSION_2, M_HTTP_METHOD_UNKNOWN, NULL, code, "OK", hr->thunk);
@@ -162,10 +168,6 @@ static M_http_error_t M_http2_http_reader_header_func(M_http2_header_t *header, 
 		args->request.path = M_strdup(header->value);
 		is_request_header = M_TRUE;
 	} else {
-		hr->rstep = M_HTTP_READER_STEP_HEADER;
-		if (hr->data_type == M_HTTP_DATA_FORMAT_MULTIPART) {
-			hr->rstep = M_HTTP_READER_STEP_MULTIPART_HEADER;
-		}
 		h_error = M_http_reader_header_entry(hr, header->key, header->value);
 	}
 
