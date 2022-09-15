@@ -585,6 +585,10 @@ M_http_error_t M_http2_reader_read(M_http2_reader_t *h2r, const unsigned char *d
 	}
 
 	while (M_http2_decode_framehdr(parser, &framehdr)) {
+		if (framehdr.len.u32 > M_parser_len(parser)) {
+			res = M_HTTP_ERROR_MOREDATA;
+			goto done;
+		}
 		if (!M_http2_frame_type_is_valid(framehdr.type)) {
 			res = M_HTTP_ERROR_INVALID_FRAME_TYPE;
 			goto done;

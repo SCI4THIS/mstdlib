@@ -415,6 +415,12 @@ static const M_uint8 test_dat10[] = {
 #define http11_data "HTTP/1.1 200 OK\r\n" \
 	"Host: blah\r\n"
 
+static const M_uint8 test_dat11[] = {
+	0x00, 0x00, 0x0b, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, /* HEADER frame */
+	0x88, 0x00, 0x83, 0xc6, 0x74, 0x27, 0x83, 0x8e, 0x81, 0xcf,
+};
+
+
 #define http12_data "POST /upload/data HTTP/1.1\r\n" \
 	"Content-Type: multipart/form-data; boundary=---------------------------7d41b838504d8\r\n" \
 	"Content-Length: 115\r\n" \
@@ -425,6 +431,26 @@ static const M_uint8 test_dat10[] = {
 	"Part data\r\n" \
 	"-----------------------------7d41b838504d8--\r\n" \
 	"ep"
+
+static const M_uint8 test_dat12[] = {
+	0x00, 0x00, 0x6a, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, /* HEADER frame */
+	0x83, 0x87, 0x01, 0x8b, 0xf1, 0xe3, 0xc2, 0xf3, 0x1c, 0xf3, 0x50, 0x55, 0xc8, 0x7a, 0x7f, 0x00,
+	0x84, 0xb9, 0x58, 0xd3, 0x3f, 0x85, 0x62, 0x83, 0xcc, 0x6a, 0xbf, 0x00, 0x89, 0xbc, 0x7a, 0x92,
+	0x5a, 0x92, 0xb6, 0xff, 0x55, 0x97, 0xb4, 0xa6, 0xda, 0x12, 0x6a, 0xc7, 0x62, 0x58, 0x94, 0xf6,
+	0x52, 0xb4, 0x83, 0x48, 0xfe, 0xd4, 0x8c, 0xf6, 0xd5, 0x20, 0xec, 0xf5, 0x02, 0xcb, 0x2c, 0xb2,
+	0xcb, 0x2c, 0xb2, 0xcb, 0x2c, 0xb2, 0xcb, 0x2c, 0xb2, 0xcb, 0x2c, 0xb2, 0xcb, 0x2c, 0xb2, 0xcb,
+	0x2c, 0xec, 0x8d, 0x06, 0x37, 0x99, 0x79, 0xb0, 0x35, 0x23, 0xdf, 0x00, 0x8a, 0xbc, 0x7a, 0x92,
+	0x5a, 0x92, 0xb6, 0x72, 0xd5, 0x32, 0x67, 0x82, 0x08, 0x5b,
+	0x00, 0x00, 0x73, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, /* DATA frame */
+	'p' , 'r' , 'e' , 'a' , 'm' , 'b' , 'l' , 'e' , '\r', '\n', '-' , '-' , '-' , '-' , '-' , '-' ,
+	'-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' ,
+	'-' , '-' , '-' , '-' , '-' , '-' , '-' , '7' , 'd' , '4' , '1' , 'b' , '8' , '3' , '8' , '5' ,
+	'0' , '4' , 'd' , '8' , '\r', '\n', '\r', '\n', 'P' , 'a' , 'r' , 't' , ' ' , 'd' , 'a' , 't' ,
+	'a' , '\r', '\n', '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' ,
+	'-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' , '-' ,
+	'7' , 'd' , '4' , '1' , 'b' , '8' , '3' , '8' , '5' , '0' , '4' , 'd' , '8' , '-' , '-' , '\r',
+	'\n', 'e' , 'p' ,
+};
 
 /* charset provided. */
 #define http13_data "HTTP/1.1 200 OK\r\n" \
@@ -1164,7 +1190,6 @@ START_TEST(check_httpr10)
 	const char      *gval;
 	const char      *eval;
 	M_http_error_t   res;
-	size_t           len      = 0;
 	size_t           len_read = 0;
 
 	/* message 1. */
@@ -1172,7 +1197,7 @@ START_TEST(check_httpr10)
 	hr  = gen_reader(ht);
 	res = M_http_reader_read(hr, (const unsigned char *)test_dat10, sizeof(test_dat10), &len_read);
 	ck_assert_msg(res == M_HTTP_ERROR_SUCCESS, "Parse failed message %d: %d", 1, res);
-	ck_assert_msg(len_read == sizeof(test_dat10), "Didn't read entire message: %d != %d", len_read, sizeof(test_dat10));
+	ck_assert_msg(len_read == sizeof(test_dat10), "Didn't read entire message: %zu != %zu", len_read, sizeof(test_dat10));
 
 	gval = M_list_str_at(ht->bpieces, 0);
 	eval = "Message 1";
@@ -1200,8 +1225,8 @@ START_TEST(check_httpr11)
 
 	ht  = httpr_test_create();
 	hr  = gen_reader(ht);
-	res = M_http_reader_read(hr, (const unsigned char *)http11_data, M_str_len(http11_data), &len_read);
-	ck_assert_msg(res == M_HTTP_ERROR_MOREDATA, "Parse failed: %d", res);
+	res = M_http_reader_read(hr, (const unsigned char *)test_dat11, sizeof(test_dat11), &len_read);
+	ck_assert_msg(res == M_HTTP_ERROR_MOREDATA, "Parse failed: (%d): %s", res, M_http_errcode_to_str(res));
 
 	httpr_test_destroy(ht);
 	M_http_reader_destroy(hr);
@@ -1426,9 +1451,9 @@ int main(void)
 	add_test(suite, check_httpr8);
 	add_test(suite, check_httpr9);
 	add_test(suite, check_httpr10);
-	/*
 	add_test(suite, check_httpr11);
 	add_test(suite, check_httpr12);
+	/*
 	add_test(suite, check_httpr13);
 	add_test(suite, check_header_format);
 	add_test(suite, check_query_string);
