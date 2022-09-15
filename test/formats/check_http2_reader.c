@@ -1348,107 +1348,6 @@ START_TEST(check_httpr13)
 }
 END_TEST
 
-START_TEST(check_header_format)
-{
-	M_http_reader_t *hr;
-	httpr_test_t    *ht;
-	M_buf_t         *buf;
-	unsigned char   *out;
-	M_http_error_t   res;
-	size_t           out_len;
-	size_t           len_read = 0;
-	size_t           i;
-	static struct {
-		const char     *header;
-		M_bool          stored;
-		M_http_error_t  res;
-	} headers[] = {
-		{ "Server:v",     M_TRUE,  M_HTTP_ERROR_SUCCESS        },
-		{ "Server:",      M_FALSE, M_HTTP_ERROR_SUCCESS        },
-		{ "Server",       M_FALSE, M_HTTP_ERROR_HEADER_INVALID },
-		{ "Server v",     M_FALSE, M_HTTP_ERROR_HEADER_INVALID },
-		{ "Server :",     M_FALSE, M_HTTP_ERROR_HEADER_INVALID },
-		{ "Server : val", M_FALSE, M_HTTP_ERROR_HEADER_INVALID },
-		{ "Server: ",     M_FALSE, M_HTTP_ERROR_SUCCESS        },
-		{ " Server: ",    M_FALSE, M_HTTP_ERROR_HEADER_FOLD    },
-		{ " Server : ",   M_FALSE, M_HTTP_ERROR_HEADER_FOLD    },
-		{ ":",            M_FALSE, M_HTTP_ERROR_HEADER_INVALID },
-		{ " :",           M_FALSE, M_HTTP_ERROR_HEADER_FOLD    },
-		{ " : ",          M_FALSE, M_HTTP_ERROR_HEADER_FOLD    },
-		{ ": ",           M_FALSE, M_HTTP_ERROR_HEADER_INVALID },
-		{ " ",            M_FALSE, M_HTTP_ERROR_HEADER_FOLD    },
-		{ NULL, M_FALSE, M_HTTP_ERROR_INVALIDUSE }
-	};
-
-	for (i=0; headers[i].header!=NULL; i++) {
-		ht  = httpr_test_create();
-		hr  = gen_reader(ht);
-
-		buf = M_buf_create();
-		M_buf_add_str(buf, "HTTP/1.1 200 OK\r\n");
-		M_buf_add_str(buf, headers[i].header);
-		M_buf_add_str(buf, "\r\n");
-		M_buf_add_str(buf, "Content-Length:0\r\n");
-		M_buf_add_str(buf, "\r\n");
-		out = M_buf_finish(buf, &out_len);
-
-		res = M_http_reader_read(hr, out, out_len, &len_read);
-		ck_assert_msg(res == headers[i].res, "Parse failed header %zu: got %d, expected %d", i, res, headers[i].res);
-		ck_assert_msg(M_hash_dict_get(ht->headers, "Server", NULL) == headers[i].stored, "Ignored header 'Server' found: %zu\n", i);
-		if (res == M_HTTP_ERROR_SUCCESS) {
-			ck_assert_msg(M_hash_dict_get(ht->headers_full, "Server", NULL), "Ignored header 'Server' found: %zu\n", i);
-		} else {
-			ck_assert_msg(!M_hash_dict_get(ht->headers_full, "Server", NULL), "Ignored header 'Server' found: %zu\n", i);
-		}
-
-		M_free(out);
-		httpr_test_destroy(ht);
-		M_http_reader_destroy(hr);
-	}
-}
-END_TEST
-
-#define do_query_check(URI, PARAMS, EXPECTED)\
-do {\
-	M_buf_t *buf;\
-	char    *query;\
-	buf = M_buf_create();\
-	ck_assert_msg(M_http_generate_query_string_buf(buf, URI, PARAMS), "Query string failed: expected '%s'", EXPECTED);\
-	ck_assert_msg(M_str_eq(M_buf_peek(buf), EXPECTED), "Query buf does not match: got '%s', expected '%s'", M_buf_peek(buf), EXPECTED);\
-	M_buf_cancel(buf);\
-	query = M_http_generate_query_string(URI, PARAMS);\
-	ck_assert_msg(M_str_eq(query, EXPECTED), "Query string does not match: got '%s', expected '%s'", query, EXPECTED);\
-	M_free(query);\
-} while (0)
-
-START_TEST(check_query_string)
-{
-	M_hash_dict_t *params = M_hash_dict_create(16, 75, M_HASH_DICT_MULTI_VALUE | M_HASH_DICT_KEYS_ORDERED);
-
-	do_query_check("/cgi-bin/some_app", NULL, "/cgi-bin/some_app");
-	do_query_check("/cgi-bin/some_app", params, "/cgi-bin/some_app");
-
-	M_hash_dict_insert(params, "field 1", "value 1_1");
-	M_hash_dict_insert(params, "field 1", "value 1_2");
-	M_hash_dict_insert(params, "f2", "v2");
-	M_hash_dict_insert(params, "f3", "v3");
-	M_hash_dict_insert(params, "f4", "");
-
-	do_query_check(NULL, params, "?field+1=value+1_1&field+1=value+1_2&f2=v2&f3=v3");
-
-	do_query_check("/cgi-bin/some_app", params, "/cgi-bin/some_app?field+1=value+1_1&field+1=value+1_2&f2=v2&f3=v3");
-
-	/* Now do some with litteral + */
-	M_hash_dict_insert(params, "field+1", "value+ +1_1");
-	M_hash_dict_insert(params, "field+1", "value + 1_2");
-
-	do_query_check(NULL, params, "?field+1=value+1_1&field+1=value+1_2&f2=v2&f3=v3&field%2B1=value%2B+%2B1_1&field%2B1=value+%2B+1_2");
-	do_query_check("/cgi-bin/some_app", params, "/cgi-bin/some_app?field+1=value+1_1&field+1=value+1_2&f2=v2&f3=v3&field%2B1=value%2B+%2B1_1&field%2B1=value+%2B+1_2");
-
-	M_hash_dict_destroy(params);
-}
-END_TEST
-
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 int main(void)
@@ -1472,10 +1371,6 @@ int main(void)
 	add_test(suite, check_httpr11);
 	add_test(suite, check_httpr12);
 	add_test(suite, check_httpr13);
-	/*
-	add_test(suite, check_header_format);
-	add_test(suite, check_query_string);
-	*/
 
 	sr = srunner_create(suite);
 	if (getenv("CK_LOG_FILE_NAME")==NULL) srunner_set_log(sr, "check_http_reader.log");
