@@ -479,6 +479,7 @@ done:
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
 M_http_error_t M_http_reader_header_entry(M_http_reader_t *httpr, const char *key, const char *val)
 {
 	M_http_error_t   res         = M_HTTP_ERROR_SUCCESS;
@@ -1150,6 +1151,42 @@ static M_http_error_t M_http_reader_calculate_body_len(M_http_reader_t *httpr)
 	return M_HTTP_ERROR_SUCCESS;
 }
 
+M_http_error_t M_http_reader_body(M_http_reader_t *httpr, M_parser_t *parser)
+{
+	M_http_error_t res = M_HTTP_ERROR_SUCCESS;
+
+	/* Read the body (not chunked message). */
+	if (httpr->rstep == M_HTTP_READER_STEP_BODY) {
+		M_bool         full_read;
+		res = M_http_read_body(httpr, parser, &full_read);
+
+		if (res != M_HTTP_ERROR_SUCCESS || !full_read)
+			return res;
+
+		/* We may never know if this is done if the content length wasn't set. */
+		httpr->rstep = M_HTTP_READER_STEP_DONE;
+		res = httpr->cbs.body_done_func(httpr->thunk);
+		return res;
+	}
+
+	/* If we're chunked then read the chunks. */
+	if (httpr->rstep == M_HTTP_READER_STEP_CHUNK_START ||
+		httpr->rstep == M_HTTP_READER_STEP_CHUNK_DATA  ||
+		httpr->rstep == M_HTTP_READER_STEP_TRAILER)
+	{
+		res = M_http_read_chunked(httpr, parser);
+	}
+
+	if (httpr->rstep == M_HTTP_READER_STEP_MULTIPART_PREAMBLE ||
+		httpr->rstep == M_HTTP_READER_STEP_MULTIPART_HEADER   ||
+		httpr->rstep == M_HTTP_READER_STEP_MULTIPART_DATA     ||
+		httpr->rstep == M_HTTP_READER_STEP_MULTIPART_EPILOUGE)
+	{
+		res = M_http_read_multipart(httpr, parser);
+	}
+	return res;
+}
+
 M_http_error_t M_http_reader_read(M_http_reader_t *httpr, const unsigned char *data, size_t data_len, size_t *len_read)
 {
 	M_parser_t     *parser;
@@ -1240,34 +1277,8 @@ M_http_error_t M_http_reader_read(M_http_reader_t *httpr, const unsigned char *d
 
 	}
 
-	/* Read the body (not chunked message). */
-	if (httpr->rstep == M_HTTP_READER_STEP_BODY) {
-		res = M_http_read_body(httpr, parser, &full_read);
+	res = M_http_reader_body(httpr, parser);
 
-		if (res != M_HTTP_ERROR_SUCCESS || !full_read)
-			goto done;
-
-		/* We may never know if this is done if the content length wasn't set. */
-		httpr->rstep = M_HTTP_READER_STEP_DONE;
-		res = httpr->cbs.body_done_func(httpr->thunk);
-		goto done;
-	}
-
-	/* If we're chunked then read the chunks. */
-	if (httpr->rstep == M_HTTP_READER_STEP_CHUNK_START ||
-		httpr->rstep == M_HTTP_READER_STEP_CHUNK_DATA  ||
-		httpr->rstep == M_HTTP_READER_STEP_TRAILER)
-	{
-		res = M_http_read_chunked(httpr, parser);
-	}
-
-	if (httpr->rstep == M_HTTP_READER_STEP_MULTIPART_PREAMBLE ||
-		httpr->rstep == M_HTTP_READER_STEP_MULTIPART_HEADER   ||
-		httpr->rstep == M_HTTP_READER_STEP_MULTIPART_DATA     ||
-		httpr->rstep == M_HTTP_READER_STEP_MULTIPART_EPILOUGE)
-	{
-		res = M_http_read_multipart(httpr, parser);
-	}
 
 done:
 	*len_read = data_len - M_parser_len(parser);

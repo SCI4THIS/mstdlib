@@ -79,7 +79,10 @@ static M_http_error_t M_http2_http_reader_data_func(M_http2_data_t *data, void *
 {
 	M_http2_http_args_t *args    = thunk;
 	M_http_reader_t     *hr      = args->hr;
-	return hr->cbs.body_func(data->data, data->data_len, hr->thunk);
+	M_parser_t          *parser  = M_parser_create_const(data->data, data->data_len, M_PARSER_FLAG_NONE);
+	M_http_error_t       res     = M_http_reader_body(hr, parser);
+	M_parser_destroy(parser);
+	return res;
 }
 
 static M_http_error_t M_http2_http_reader_settings_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
@@ -107,7 +110,6 @@ static void M_http2_http_reader_error_func(M_http_error_t errcode, const char *e
 {
 	(void)errcode;
 	(void)errmsg;
-	M_printf("ERROR: %s\n", errmsg);
 }
 
 static M_http_error_t M_http2_http_reader_headers_begin_func(M_http2_framehdr_t *framehdr, void *thunk)
@@ -124,6 +126,10 @@ static M_http_error_t M_http2_http_reader_headers_end_func(M_http2_framehdr_t *f
 	M_http_error_t       h_error;
 	(void)framehdr;
 	h_error = hr->cbs.header_done_func(M_HTTP_DATA_FORMAT_CHUNKED, hr->thunk);
+	hr->rstep = M_HTTP_READER_STEP_BODY;
+	if (hr->data_type == M_HTTP_DATA_FORMAT_MULTIPART) {
+		hr->rstep = M_HTTP_READER_STEP_MULTIPART_PREAMBLE;
+	}
 	return h_error;
 }
 
@@ -157,6 +163,9 @@ static M_http_error_t M_http2_http_reader_header_func(M_http2_header_t *header, 
 		is_request_header = M_TRUE;
 	} else {
 		hr->rstep = M_HTTP_READER_STEP_HEADER;
+		if (hr->data_type == M_HTTP_DATA_FORMAT_MULTIPART) {
+			hr->rstep = M_HTTP_READER_STEP_MULTIPART_HEADER;
+		}
 		h_error = M_http_reader_header_entry(hr, header->key, header->value);
 	}
 
