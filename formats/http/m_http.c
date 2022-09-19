@@ -59,9 +59,7 @@ static void M_http_reset_int(M_http_t *http)
 
 	M_free(http->reason_phrase);
 	M_free(http->uri);
-	M_free(http->host);
-	M_free(http->path);
-	M_free(http->query_string);
+	M_url_destroy(http->url_st);
 	M_hash_dict_destroy(http->query_args);
 	M_hash_strvp_destroy(http->headers, M_TRUE);
 	M_free(http->content_type);
