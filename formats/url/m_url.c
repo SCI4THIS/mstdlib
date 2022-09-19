@@ -96,7 +96,7 @@ M_url_t *M_url_create(const char *url_str)
 	return url;
 }
 
-const char *M_url_schema(M_url_t *url)
+const char *M_url_schema(const M_url_t *url)
 {
 	if (url == NULL)
 		return NULL;
@@ -111,7 +111,7 @@ void M_url_set_schema(M_url_t *url, const char *schema)
 	url->schema = M_strdup(schema);
 }
 
-const char *M_url_host(M_url_t *url)
+const char *M_url_host(const M_url_t *url)
 {
 	if (url == NULL)
 		return NULL;
@@ -126,7 +126,7 @@ void M_url_set_host(M_url_t *url, const char *host)
 	url->host = M_strdup(host);
 }
 
-const char *M_url_port(M_url_t *url)
+const char *M_url_port(const M_url_t *url)
 {
 	if (url == NULL)
 		return NULL;
@@ -142,7 +142,7 @@ void M_url_set_port(M_url_t *url, const char *port)
 	url->port_u16 = (M_uint16)M_str_to_uint32(port);
 }
 
-const char *M_url_path(M_url_t *url)
+const char *M_url_path(const M_url_t *url)
 {
 	if (url == NULL)
 		return NULL;
@@ -157,7 +157,7 @@ void M_url_set_path(M_url_t *url, const char *path)
 	url->path = M_strdup(path);
 }
 
-const char *M_url_query(M_url_t *url)
+const char *M_url_query(const M_url_t *url)
 {
 	if (url == NULL)
 		return NULL;
@@ -172,7 +172,7 @@ void M_url_set_query(M_url_t *url, const char *query)
 	url->query = M_strdup(query);
 }
 
-const char *M_url_fragment(M_url_t *url)
+const char *M_url_fragment(const M_url_t *url)
 {
 	if (url == NULL)
 		return NULL;
@@ -187,7 +187,7 @@ void M_url_set_fragment(M_url_t *url, const char *fragment)
 	url->fragment = M_strdup(fragment);
 }
 
-const char *M_url_userinfo(M_url_t *url)
+const char *M_url_userinfo(const M_url_t *url)
 {
 	if (url == NULL)
 		return NULL;
@@ -202,7 +202,7 @@ void M_url_set_userinfo(M_url_t *url, const char *userinfo)
 	url->userinfo = M_strdup(userinfo);
 }
 
-M_uint16 M_url_port_u16(M_url_t *url)
+M_uint16 M_url_port_u16(const M_url_t *url)
 {
 	if (url == NULL)
 		return 0;

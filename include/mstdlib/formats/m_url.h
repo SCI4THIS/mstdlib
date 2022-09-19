@@ -70,7 +70,7 @@ M_API M_url_t *M_url_create(const char *url_str);
  *
  * \return schema string (NULL if none)
  */
-M_API const char *M_url_schema(M_url_t *url);
+M_API const char *M_url_schema(const M_url_t *url);
 
 /*! Setter function
  *
@@ -85,7 +85,7 @@ M_API void        M_url_set_schema(M_url_t *url, const char *schema);
  *
  * \return host string (NULL if none)
  */
-M_API const char *M_url_host(M_url_t *url);
+M_API const char *M_url_host(const M_url_t *url);
 
 /*! Setter function
  *
@@ -100,7 +100,7 @@ M_API void        M_url_set_host(M_url_t *url, const char *host);
  *
  * \return port string (NULL if none)
  */
-M_API const char *M_url_port(M_url_t *url);
+M_API const char *M_url_port(const M_url_t *url);
 
 /*! Setter function
  *
@@ -115,7 +115,7 @@ M_API void        M_url_set_port(M_url_t *url, const char *port);
  *
  * \return path string (NULL if none)
  */
-M_API const char *M_url_path(M_url_t *url);
+M_API const char *M_url_path(const M_url_t *url);
 
 /*! Setter function
  *
@@ -130,7 +130,7 @@ M_API void        M_url_set_path(M_url_t *url, const char *path);
  *
  * \return query string (NULL if none)
  */
-M_API const char *M_url_query(M_url_t *url);
+M_API const char *M_url_query(const M_url_t *url);
 
 /*! Setter function
  *
@@ -145,7 +145,7 @@ M_API void        M_url_set_query(M_url_t *url, const char *query);
  *
  * \return fragment string (NULL if none)
  */
-M_API const char *M_url_fragment(M_url_t *url);
+M_API const char *M_url_fragment(const M_url_t *url);
 
 /*! Setter function
  *
@@ -160,7 +160,7 @@ M_API void        M_url_set_fragment(M_url_t *url, const char *fragment);
  *
  * \return userinfo string (NULL if none)
  */
-M_API const char *M_url_userinfo(M_url_t *url);
+M_API const char *M_url_userinfo(const M_url_t *url);
 
 /*! Setter function
  *
@@ -175,7 +175,7 @@ M_API void        M_url_set_userinfo(M_url_t *url, const char *userinfo);
  *
  * \return port as M_uint16 (0 if none)
  */
-M_API M_uint16    M_url_port_u16(M_url_t *url);
+M_API M_uint16    M_url_port_u16(const M_url_t *url);
 
 /*! Setter function
  *

@@ -117,76 +117,6 @@ static void M_net_http_simple_destroy(M_net_http_simple_t *hs)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static void split_url(const char *url, char **host, M_uint16 *port, char **uri)
-{
-	M_parser_t *parser;
-	M_uint64    port64;
-	M_uint16    myport;
-
-	if (port == NULL)
-		port = &myport;
-	*port = 0;
-
-	parser = M_parser_create_const((const unsigned char *)url, M_str_len(url), M_PARSER_FLAG_NONE);
-
-	/* Kill off the prefix. */ 
-	M_parser_consume_str_until(parser, "://", M_TRUE);
-
-	/* Mark the start of the host. */
-	M_parser_mark(parser);
-
-	if (M_parser_consume_str_until(parser, ":", M_FALSE) != 0) {
-		/* Having a ":" means we have a port so everything before is
-		 * the host. */
-		if (host != NULL) {
-			*host = M_parser_read_strdup_mark(parser);
-		}
-
-		/* kill the ":". */
-		M_parser_consume(parser, 1);
-
-		/* Read the port. */
-		if (M_parser_read_uint(parser, M_PARSER_INTEGER_ASCII, 0, 10, &port64)) {
-			*port = (M_uint16)port64;
-		}
-	} else if (M_parser_consume_str_until(parser, "/", M_FALSE) != 0) {
-		/* No port was specified try to find the start of the path. */
-		if (host != NULL) {
-			*host = M_parser_read_strdup_mark(parser);
-		}
-	} else {
-		/* No port and no / means all we have is the host. */
-		if (host != NULL) {
-			*host = M_parser_read_strdup(parser, M_parser_len(parser));
-		}
-	}
-
-	/* Get the uri. */
-	if (M_parser_len(parser) == 0) {
-		/* Nothing left, must be /. */
-		if (uri != NULL) {
-			*uri = M_strdup("/");
-		}
-	} else {
-		if (uri != NULL) {
-			*uri = M_parser_read_strdup(parser, M_parser_len(parser));
-		}
-	}
-
-	if (*port == 0) {
-		if (M_str_caseeq_start(url, "http://")) {
-			*port = 80;
-		} else {
-			/* Prefer secure connections. */
-			*port = 443;
-		}
-	}
-
-	M_parser_destroy(parser);
-}
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
 static void call_done(M_net_http_simple_t *hs)
 {
 	/* Got the final data. Stop our timers. */
@@ -277,16 +207,12 @@ static void M_net_http_simple_ready_send(M_net_http_simple_t *hs)
 	io_disconnect_and_destroy(hs);
 }
 
-static M_bool setup_io(M_net_http_simple_t *hs, const char *url)
+static M_bool setup_io(M_net_http_simple_t *hs, const M_url_t *url_st)
 {
-	char         *hostname;
-	M_uint16      port;
 	M_io_error_t  ioerr;
 	size_t        lid;
 
-	split_url(url, &hostname, &port, NULL);
-	ioerr = M_io_net_client_create(&hs->io, hs->dns, hostname, port, M_IO_NET_ANY);
-	M_free(hostname);
+	ioerr = M_io_net_client_create(&hs->io, hs->dns, M_url_host(url_st), M_url_port_u16(url_st), M_IO_NET_ANY);
 	if (ioerr != M_IO_ERROR_SUCCESS) {
 		hs->neterr = M_NET_ERROR_CREATE;
 		M_snprintf(hs->error, sizeof(hs->error), "Failed to create network client: %s", M_io_error_string(ioerr));
@@ -294,7 +220,7 @@ static M_bool setup_io(M_net_http_simple_t *hs, const char *url)
 	}
 
 	/* If this is an https connection add the context. */
-	if (M_str_caseeq_start(url, "https://")) {
+	if (M_str_caseeq_start(M_url_schema(url_st), "https")) {
 		if (hs->ctx == NULL) {
 			hs->neterr = M_NET_ERROR_TLS_REQUIRED;
 			M_snprintf(hs->error, sizeof(hs->error), "HTTPS Connection required but client context no set");
@@ -615,11 +541,13 @@ void M_net_http_simple_set_message(M_net_http_simple_t *hs, M_http_method_t meth
 
 M_bool M_net_http_simple_send(M_net_http_simple_t *hs, const char *url, void *thunk)
 {
-	char     *host;
-	char     *uri;
-	M_uint16  port;
+	M_url_t  *url_st;
 
 	if (hs == NULL || M_str_isempty(url) || (!M_str_caseeq_start(url, "http://") && !M_str_caseeq_start(url, "https://")))
+		return M_FALSE;
+
+	url_st = M_url_create(url);
+	if (url_st == NULL)
 		return M_FALSE;
 
 	/* Setup the object for sending data. */
@@ -628,21 +556,20 @@ M_bool M_net_http_simple_send(M_net_http_simple_t *hs, const char *url, void *th
 	hs->thunk = thunk;
 
 	/* Create our io object. */
-	if (!setup_io(hs, url))
+	if (!setup_io(hs, url_st)) {
+		M_url_destroy(url_st);
 		return M_FALSE;
+	}
 
 	/* Setup read and write buffer. */
 	hs->header_buf  = M_buf_create();
 	hs->read_parser = M_parser_create(M_PARSER_FLAG_NONE);
 
 	/* Add the data to the write buf. */
-	split_url(url, &host, &port, &uri);
 	M_http_simple_write_request_buf(hs->header_buf, hs->method,
-		host, port, uri,
+		M_url_host(url_st), M_url_port_u16(url_st), M_url_path(url_st),
 		hs->user_agent, hs->content_type, hs->headers,
 		NULL, hs->message_len, hs->charset);
-	M_free(host);
-	M_free(uri);
 
 	/* Start/reset our timers. */
 	timer_start_connect(hs);
@@ -655,8 +582,10 @@ M_bool M_net_http_simple_send(M_net_http_simple_t *hs, const char *url, void *th
 		hs->neterr = M_NET_ERROR_INTERNAL;
 		M_snprintf(hs->error, sizeof(hs->error), "Event error: Failed to start");
 		io_disconnect_and_destroy(hs);
+		M_url_destroy(url_st);
 		return M_FALSE;
 	}
 
+	M_url_destroy(url_st);
 	return M_TRUE;
 }
