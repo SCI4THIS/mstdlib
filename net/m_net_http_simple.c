@@ -1,17 +1,17 @@
 /* The MIT License (MIT)
- * 
+ *
  * Copyright (c) 2019 Monetra Technologies, LLC.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -351,23 +351,21 @@ static void run_cb(M_event_t *el, M_event_type_t etype, M_io_t *io, void *thunk)
 
 	(void)el;
 
-    switch (etype) {
-        case M_EVENT_TYPE_CONNECTED:
+	switch (etype) {
+		case M_EVENT_TYPE_CONNECTED:
 			/* Kick this off by writing our headers. */
 			if (!write_data(io, hs)) {
 				call_done(hs);
 			}
-            break;
-        case M_EVENT_TYPE_READ:
-            M_io_read_into_parser(io, hs->read_parser);
-
+			break;
+		case M_EVENT_TYPE_READ:
+			M_io_read_into_parser(io, hs->read_parser);
 			if (hs->receive_max != 0 && M_parser_len(hs->read_parser) > hs->receive_max) {
 				hs->neterr = M_NET_ERROR_OVER_LIMIT;
 				M_snprintf(hs->error, sizeof(hs->error), "Exceeded maximum receive data size limit");
 				call_done(hs);
 				break;
 			}
-
 			M_parser_mark(hs->read_parser);
 			httperr = M_http_simple_read_parser(&hs->simple, hs->read_parser, M_HTTP_SIMPLE_READ_NONE);
 			if (httperr == M_HTTP_ERROR_SUCCESS) {
@@ -380,7 +378,6 @@ static void run_cb(M_event_t *el, M_event_type_t etype, M_io_t *io, void *thunk)
 					M_http_simple_read_destroy(hs->simple);
 					hs->simple = NULL;
 				}
-
 				M_parser_mark_rewind(hs->read_parser);
 				timer_start_stall(hs);
 			} else {
@@ -389,15 +386,14 @@ static void run_cb(M_event_t *el, M_event_type_t etype, M_io_t *io, void *thunk)
 				M_snprintf(hs->error, sizeof(hs->error), "Format error: %s", M_http_errcode_to_str(httperr));
 				call_done(hs);
 			}
-
-            break;
-        case M_EVENT_TYPE_WRITE:
+			break;
+		case M_EVENT_TYPE_WRITE:
 			timer_start_stall(hs);
 			if (!write_data(io, hs)) {
 				call_done(hs);
 			}
-            break;
-        case M_EVENT_TYPE_DISCONNECTED:
+			break;
+		case M_EVENT_TYPE_DISCONNECTED:
 			/* We got a disconenct from the server. Normally we're the ones
 			 * to disconnect once we get the response.
 			 *
@@ -411,16 +407,16 @@ static void run_cb(M_event_t *el, M_event_type_t etype, M_io_t *io, void *thunk)
 			hs->neterr = M_NET_ERROR_DISCONNET;
 			M_io_get_error_string(io, hs->error, sizeof(hs->error));
 			call_done(hs);
-            break;
-        case M_EVENT_TYPE_ERROR:
+			break;
+		case M_EVENT_TYPE_ERROR:
 			hs->neterr = M_net_io_error_to_net_error(M_io_get_error(io));
 			M_io_get_error_string(io, hs->error, sizeof(hs->error));
 			call_done(hs);
-            break;
-        case M_EVENT_TYPE_ACCEPT:
-        case M_EVENT_TYPE_OTHER:
-            break;
-    }
+			break;
+		case M_EVENT_TYPE_ACCEPT:
+		case M_EVENT_TYPE_OTHER:
+			break;
+	}
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -514,7 +510,7 @@ void M_net_http_simple_set_message(M_net_http_simple_t *hs, M_http_method_t meth
 	hs->method = method;
 
 	/* We're going to free everything just in case this was called multiple
- 	 * times. I shouldn't be but we'll be safe. */
+	 * times. I shouldn't be but we'll be safe. */
 
 	M_free(hs->user_agent);
 	hs->user_agent = NULL;
