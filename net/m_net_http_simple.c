@@ -26,45 +26,38 @@
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 struct M_net_http_simple {
-	M_event_t         *el;
-
-	M_dns_t           *dns;
-	M_tls_clientctx_t *ctx;
-
-	M_uint64           redirect_max;
-	M_uint64           redirect_cnt;
-
-	M_uint64           receive_max;
-
-	M_uint64           timeout_connect_ms;
-	M_uint64           timeout_stall_ms;
-	M_uint64           timeout_overall_ms;
-	M_event_timer_t   *timer_stall;
-	M_event_timer_t   *timer_overall;
-
-	M_io_t            *io;
-	M_parser_t        *read_parser;
-	M_buf_t           *header_buf;
-
+	M_event_t            *el;
+	M_dns_t              *dns;
+	M_tls_clientctx_t    *ctx;
+	M_uint64              redirect_max;
+	M_uint64              redirect_cnt;
+	M_uint64              receive_max;
+	M_uint64              timeout_connect_ms;
+	M_uint64              timeout_stall_ms;
+	M_uint64              timeout_overall_ms;
+	M_event_timer_t      *timer_stall;
+	M_event_timer_t      *timer_overall;
+	M_io_t               *io;
+	M_parser_t           *read_parser;
+	M_buf_t              *header_buf;
 	M_http_simple_read_t *simple;
-
-	M_http_method_t  method;
-	char            *user_agent;
-	char            *content_type;
-	char            *charset;
-	M_hash_dict_t   *headers;
-	unsigned char   *message;
-	size_t           message_len;
-	size_t           message_pos;
-
-	M_http_error_t   httperr;
-	M_net_error_t    neterr;
-	char             error[256];
-
-	void            *thunk;
-
-	M_net_http_simple_done_cb      done_cb;
-	M_net_http_simple_iocreate_cb  iocreate_cb;
+	M_http_method_t       method;
+	char                 *user_agent;
+	char                 *content_type;
+	char                 *charset;
+	M_hash_dict_t        *headers;
+	unsigned char        *message;
+	size_t                message_len;
+	size_t                message_pos;
+	M_http_version_t      version;
+	M_http_error_t        httperr;
+	M_net_error_t         neterr;
+	char                  error[256];
+	void                  *thunk;
+	struct {
+		M_net_http_simple_done_cb      done_cb;
+		M_net_http_simple_iocreate_cb  iocreate_cb;
+	} cbs;
 };
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -72,6 +65,15 @@ struct M_net_http_simple {
 static const char *DEFAULT_USER_AGENT = "MSTDLIB/Net HTTP Simple " NET_HTTP_VERSION;
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+static M_bool iocreate_cb_default(M_io_t *io, char *error, size_t errlen, void *thunk)
+{
+	(void)io;
+	(void)error;
+	(void)errlen;
+	(void)thunk;
+	return M_TRUE;
+}
 
 static void io_destroy_cb(M_event_t *el, M_event_type_t etype, M_io_t *io, void *thunk)
 {
@@ -123,7 +125,7 @@ static void call_done(M_net_http_simple_t *hs)
 	M_event_timer_stop(hs->timer_stall);
 	M_event_timer_stop(hs->timer_overall);
 
-	hs->done_cb(hs->neterr, hs->httperr, hs->simple, hs->error, hs->thunk);
+	hs->cbs.done_cb(hs->neterr, hs->httperr, hs->simple, hs->error, hs->thunk);
 
 	/* DO NOT USE hs after this point. Nothing can set
  	 * hs as a thunk argument for a cb to receive!!! */
@@ -238,15 +240,13 @@ static M_bool setup_io(M_net_http_simple_t *hs, const M_url_t *url_st)
 	}
 
 	/* Allow the user of this object to add any additional layers. Logging, bw shapping... */
-	if (hs->iocreate_cb) {
-		if (!hs->iocreate_cb(hs->io, hs->error, sizeof(hs->error), hs->thunk)) {
-			hs->neterr = M_NET_ERROR_CREATE;
-			if (M_str_isempty(hs->error)) {
-				M_snprintf(hs->error, sizeof(hs->error), "iocreate generic failure");
-			}
-			io_disconnect_and_destroy(hs);
-			return M_FALSE;
+	if (!hs->cbs.iocreate_cb(hs->io, hs->error, sizeof(hs->error), hs->thunk)) {
+		hs->neterr = M_NET_ERROR_CREATE;
+		if (M_str_isempty(hs->error)) {
+			M_snprintf(hs->error, sizeof(hs->error), "iocreate generic failure");
 		}
+		io_disconnect_and_destroy(hs);
+		return M_FALSE;
 	}
 
 	return M_TRUE;
@@ -432,14 +432,15 @@ M_net_http_simple_t *M_net_http_simple_create(M_event_t *el, M_dns_t *dns, M_net
 	if (el == NULL || dns == NULL || done_cb == NULL)
 		return NULL;
 
-	hs               = M_malloc_zero(sizeof(*hs));
-	hs->el           = el;
-	hs->dns          = dns;
-	hs->redirect_max = 16;
-	hs->receive_max  = 1024*1024*50; /* 50 MB */
-	hs->done_cb      = done_cb;
-	hs->method       = M_HTTP_METHOD_GET;
-	hs->user_agent   = M_strdup(DEFAULT_USER_AGENT);
+	hs                  = M_malloc_zero(sizeof(*hs));
+	hs->el              = el;
+	hs->dns             = dns;
+	hs->redirect_max    = 16;
+	hs->receive_max     = 1024*1024*50; /* 50 MB */
+	hs->cbs.done_cb     = done_cb;
+	hs->cbs.iocreate_cb = iocreate_cb_default;
+	hs->method          = M_HTTP_METHOD_GET;
+	hs->user_agent      = M_strdup(DEFAULT_USER_AGENT);
 
 	return hs;
 }
@@ -489,7 +490,18 @@ void M_net_http_simple_set_iocreate(M_net_http_simple_t *hs, M_net_http_simple_i
 {
 	if (hs == NULL)
 		return;
-	hs->iocreate_cb = iocreate_cb;
+	if (iocreate_cb != NULL) {
+		hs->cbs.iocreate_cb = iocreate_cb;
+	} else {
+		hs->cbs.iocreate_cb = iocreate_cb_default;
+	}
+}
+
+void M_net_http_simple_set_version(M_net_http_simple_t *hs, M_http_version_t version)
+{
+	if (hs == NULL)
+		return;
+	hs->version = version;
 }
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
