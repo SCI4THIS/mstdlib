@@ -128,7 +128,7 @@ static void call_done(M_net_http_simple_t *hs)
 	hs->cbs.done_cb(hs->neterr, hs->httperr, hs->simple, hs->error, hs->thunk);
 
 	/* DO NOT USE hs after this point. Nothing can set
- 	 * hs as a thunk argument for a cb to receive!!! */
+	 * hs as a thunk argument for a cb to receive!!! */
 	M_net_http_simple_destroy(hs);
 }
 
