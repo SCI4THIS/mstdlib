@@ -30,6 +30,7 @@ typedef struct {
 	M_buf_t               *epilouge;
 	M_list_str_t          *bpieces;
 	M_hash_dict_t         *cextensions;
+	size_t                 idx;
 } httpr_test_t;
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -579,10 +580,10 @@ static M_http_error_t chunk_data_func(const unsigned char *data, size_t len, siz
 
 static M_http_error_t body_func(const unsigned char *data, size_t len, void *thunk)
 {
-	static size_t  idx = 0;
 	httpr_test_t  *ht  = thunk;
 
-	chunk_data_func(data, len, idx++, thunk);
+	chunk_data_func(data, len, ht->idx, thunk);
+	ht->idx++;
 	M_buf_add_bytes(ht->body, data, len);
 	return M_HTTP_ERROR_SUCCESS;
 }
